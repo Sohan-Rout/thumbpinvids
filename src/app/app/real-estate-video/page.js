@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,7 +48,7 @@ const ASPECT_RATIOS = [
   { value: "1:1", label: "1:1 — Square (Instagram)" },
 ];
 
-export default function RealEstateVideoPage() {
+function RealEstateVideoContent() {
   const [step, setStep] = useState(0);
 
   // Avatar state
@@ -1569,5 +1569,20 @@ export default function RealEstateVideoPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function RealEstateVideoPage() {
+  return (
+    <Suspense fallback={
+      <div className="max-w-4xl mx-auto py-8 px-4 flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <p className="text-sm text-muted-foreground font-medium">Loading Real Estate Video Tool...</p>
+        </div>
+      </div>
+    }>
+      <RealEstateVideoContent />
+    </Suspense>
   );
 }
