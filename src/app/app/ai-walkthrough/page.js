@@ -22,6 +22,51 @@ import {
 
 const MAX_SCRIPT = 450;
 
+async function compressImage(file, maxDimension = 1200, quality = 0.7) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDimension) {
+            height *= maxDimension / width;
+            width = maxDimension;
+          }
+        } else {
+          if (height > maxDimension) {
+            width *= maxDimension / height;
+            height = maxDimension;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            const compressedFile = new File([blob], file.name, {
+              type: "image/jpeg",
+              lastModified: Date.now(),
+            });
+            resolve(compressedFile);
+          },
+          "image/jpeg",
+          quality
+        );
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function splitScript(script, parts = 3) {
   const trimmed = script.trim();
   if (!trimmed) return [];
@@ -250,9 +295,13 @@ export default function AIWalkthroughPage() {
     setGenerating(true);
 
     try {
+      toast.info("Preparing images...");
+      const compressedPerson = await Promise.all(personImages.slice(0, 2).map(f => compressImage(f)));
+      const compressedLocation = await Promise.all(locationImages.slice(0, 2).map(f => compressImage(f)));
+
       const fd = new FormData();
-      personImages.forEach((f) => fd.append("personImages", f));
-      locationImages.forEach((f) => fd.append("locationImages", f));
+      compressedPerson.forEach((f) => fd.append("personImages", f));
+      compressedLocation.forEach((f) => fd.append("locationImages", f));
       fd.append("scriptParts", JSON.stringify(parts));
 
       const response = await fetch("/api/ai-walkthrough/generate", {
