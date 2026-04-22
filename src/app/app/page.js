@@ -1,39 +1,110 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UpgradeBanner } from "@/components/dashboard/upgrade-banner";
 import { useUser } from "@/hooks/use-user";
-import { mockVideos } from "@/lib/mock-data";
-import { Wand2, Play, Download, Clock, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
-
-const statusConfig = {
-  ready: { label: "Ready", icon: CheckCircle, color: "bg-green-500/10 text-green-600 border-green-500/20" },
-  generating: { label: "Generating", icon: Loader2, color: "bg-blue-500/10 text-blue-600 border-blue-500/20" },
-  queued: { label: "Queued", icon: Clock, color: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20" },
-  error: { label: "Error", icon: AlertCircle, color: "bg-red-500/10 text-red-600 border-red-500/20" },
-};
+import {
+  Wand2,
+  Video,
+  Image,
+  CreditCard,
+  Layers,
+  ArrowRight,
+  Sparkles,
+} from "lucide-react";
 
 export default function DashboardPage() {
-  const { profile, loading } = useUser();
+  const { profile, loading: userLoading } = useUser();
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  useEffect(() => {
+    async function fetchStats() {
+      try {
+        const res = await fetch("/api/user/stats");
+        if (res.ok) {
+          const data = await res.json();
+          setStats(data.stats);
+        }
+      } catch (err) {
+        console.error("Failed to fetch stats:", err);
+      } finally {
+        setLoadingStats(false);
+      }
+    }
+    fetchStats();
+  }, []);
+
+  const loading = userLoading || loadingStats;
+
+  const userName = profile?.name || profile?.email?.split("@")[0] || "there";
+
+  const statCards = [
+    {
+      label: "Credits Left",
+      value: loading ? null : (profile?.credits ?? 0),
+      icon: CreditCard,
+      color: "text-indigo-600 bg-indigo-50",
+    },
+    {
+      label: "Total Videos",
+      value: loading ? null : (stats?.totalVideos ?? 0),
+      icon: Video,
+      color: "text-emerald-600 bg-emerald-50",
+    },
+    {
+      label: "Composites",
+      value: loading ? null : (stats?.totalComposites ?? 0),
+      icon: Layers,
+      color: "text-violet-600 bg-violet-50",
+    },
+    {
+      label: "Total Assets",
+      value: loading ? null : (stats?.totalAssets ?? 0),
+      icon: Image,
+      color: "text-amber-600 bg-amber-50",
+    },
+  ];
+
+  const quickActions = [
+    {
+      title: "Text to Video",
+      description: "Generate a UGC video from a script",
+      href: "/app/text-to-video",
+      icon: Video,
+    },
+    {
+      title: "Real Estate",
+      description: "Create property walkthrough videos",
+      href: "/app/ai-walkthrough",
+      icon: Sparkles,
+    },
+    {
+      title: "Product Video",
+      description: "Generate product showcase videos",
+      href: "/app/product-to-video",
+      icon: Wand2,
+    },
+  ];
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold font-heading">
-            Welcome back{profile?.email ? `, ${profile.email.split("@")[0]}` : ""} 👋
+          <h1 className="text-2xl font-semibold font-heading tracking-tight">
+            Welcome back, {userName} 👋
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Create your next viral UGC ad in seconds
+          <p className="text-sm text-muted-foreground mt-1">
+            Here&apos;s what&apos;s happening with your videos
           </p>
         </div>
-        <Link href="/app/generate">
-          <Button className="gradient-bg text-white cursor-pointer shadow-lg">
+        <Link href="/app/text-to-video">
+          <Button className="gradient-bg text-white cursor-pointer shadow-sm h-9 text-sm">
             <Wand2 className="w-4 h-4 mr-2" />
             New Video
           </Button>
@@ -43,98 +114,56 @@ export default function DashboardPage() {
       {/* Upgrade Banner */}
       <UpgradeBanner />
 
-      {/* Stats Cards */}
+      {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "Credits Left", value: loading ? "—" : profile?.credits ?? 0, icon: "💳" },
-          { label: "Videos Created", value: mockVideos.length, icon: "🎬" },
-          { label: "Videos Ready", value: mockVideos.filter(v => v.status === "ready").length, icon: "✅" },
-          { label: "In Queue", value: mockVideos.filter(v => v.status === "queued" || v.status === "generating").length, icon: "⏳" },
-        ].map((stat, i) => (
-          <Card key={i} className="border-border/50 bg-card/50">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-2xl">{stat.icon}</span>
-              </div>
-              <p className="text-2xl font-bold">{stat.value}</p>
-              <p className="text-xs text-muted-foreground">{stat.label}</p>
-            </CardContent>
-          </Card>
-        ))}
+        {statCards.map((stat, i) => {
+          const Icon = stat.icon;
+          return (
+            <Card key={i} className="border border-border/50">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${stat.color}`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                </div>
+                {stat.value === null ? (
+                  <Skeleton className="h-7 w-12 mb-1" />
+                ) : (
+                  <p className="text-2xl font-semibold tracking-tight">{stat.value}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-0.5">{stat.label}</p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
-      {/* Recent Videos */}
+      {/* Quick Actions */}
       <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold font-heading">Recent Videos</h2>
-          <Link href="/app/history">
-            <Button variant="ghost" size="sm" className="cursor-pointer">
-              View All
-            </Button>
-          </Link>
-        </div>
-
-        {loading ? (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="border-border/50">
-                <CardContent className="p-4 space-y-3">
-                  <Skeleton className="aspect-[9/16] w-full rounded-lg" />
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {mockVideos.map((video) => {
-              const status = statusConfig[video.status];
-              const StatusIcon = status.icon;
-              return (
-                <Card key={video.id} className="group border-border/50 hover:shadow-lg transition-all hover:-translate-y-1 overflow-hidden">
-                  <CardContent className="p-0">
-                    {/* Thumbnail */}
-                    <div className="aspect-[9/16] bg-gradient-to-b from-primary/10 to-accent/10 relative overflow-hidden">
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {video.status === "ready" ? (
-                          <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border-2 border-white/30 group-hover:scale-110 transition-transform cursor-pointer">
-                            <Play className="w-6 h-6 text-white ml-0.5" />
-                          </div>
-                        ) : (
-                          <StatusIcon className={`w-8 h-8 ${video.status === "generating" ? "animate-spin text-blue-400" : "text-muted-foreground"}`} />
-                        )}
-                      </div>
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-3">
-                        <Badge className={`${status.color} border text-xs`}>
-                          <StatusIcon className={`w-3 h-3 mr-1 ${video.status === "generating" ? "animate-spin" : ""}`} />
-                          {status.label}
-                        </Badge>
-                      </div>
+        <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wider">
+          Quick Actions
+        </h2>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <Link key={action.href} href={action.href}>
+                <Card className="border border-border/50 hover:border-primary/20 hover:shadow-sm transition-all cursor-pointer group">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                      <Icon className="w-5 h-5 text-primary" />
                     </div>
-
-                    {/* Info */}
-                    <div className="p-3 space-y-2">
-                      <p className="text-sm font-medium line-clamp-2">
-                        {video.script.substring(0, 60)}...
-                      </p>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(video.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-                        </p>
-                        {video.status === "ready" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer">
-                            <Download className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{action.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{action.description}</p>
                     </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
                   </CardContent>
                 </Card>
-              );
-            })}
-          </div>
-        )}
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

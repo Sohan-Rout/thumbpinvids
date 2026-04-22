@@ -18,7 +18,7 @@ const AssetSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["avatar", "product", "background", "video", "clip"],
+      enum: ["avatar", "product", "background", "video", "clip", "composite"],
       required: true,
     },
     metadata: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,24 +20,32 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Shield, Search, RefreshCcw, Users, Video } from "lucide-react";
-import { mockVideos } from "@/lib/mock-data";
 import { toast } from "sonner";
-
-const mockUsers = [
-  { id: "u1", email: "ritika@skincarebrand.in", credits: 45, tier: "pro", videos: 23 },
-  { id: "u2", email: "kunal@d2cfoundr.com", credits: 3, tier: "free", videos: 7 },
-  { id: "u3", email: "neha@influencer.co", credits: 0, tier: "free", videos: 10 },
-  { id: "u4", email: "arjun@ecomstore.in", credits: 120, tier: "pro", videos: 56 },
-  { id: "u5", email: "priya@marketingagency.in", credits: 8, tier: "free", videos: 2 },
-];
 
 export function AdminModal() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const filteredUsers = mockUsers.filter((u) =>
-    u.email.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    // Fetch real data when admin panel opens
+    Promise.all([
+      fetch("/api/user/stats").then((r) => r.json()).catch(() => ({})),
+    ])
+      .then(() => {
+        // Admin endpoints not yet implemented — show placeholder
+      })
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const filteredUsers = users.filter((u) =>
+    u.email?.toLowerCase().includes(search.toLowerCase())
   );
 
   function handleRefillCredits(userId, email) {
@@ -75,84 +83,68 @@ export function AdminModal() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search users by email..."
-                className="pl-10"
+                className="pl-10 h-9 text-sm"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Credits</TableHead>
-                  <TableHead>Tier</TableHead>
-                  <TableHead>Videos</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="text-sm">{user.email}</TableCell>
-                    <TableCell>
-                      <Badge variant={user.credits > 5 ? "secondary" : "destructive"}>
-                        {user.credits}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={user.tier === "pro" ? "default" : "outline"} className="capitalize">
-                        {user.tier}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{user.videos}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="cursor-pointer"
-                        onClick={() => handleRefillCredits(user.id, user.email)}
-                      >
-                        <RefreshCcw className="w-3 h-3 mr-1" /> +10 Credits
-                      </Button>
-                    </TableCell>
+            {loading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            ) : filteredUsers.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Credits</TableHead>
+                    <TableHead>Plan</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredUsers.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="text-sm">{user.email}</TableCell>
+                      <TableCell>
+                        <Badge variant={user.credits > 5 ? "secondary" : "destructive"} className="text-xs">
+                          {user.credits}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={user.plan === "pro" ? "default" : "outline"} className="capitalize text-xs">
+                          {user.plan}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="cursor-pointer h-7 text-xs"
+                          onClick={() => handleRefillCredits(user.id, user.email)}
+                        >
+                          <RefreshCcw className="w-3 h-3 mr-1" /> +10 Credits
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="text-center py-8 text-sm text-muted-foreground">
+                <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+                Admin user management coming soon
+              </div>
+            )}
           </TabsContent>
 
           {/* Videos Tab */}
           <TabsContent value="videos" className="space-y-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Video ID</TableHead>
-                  <TableHead>Script</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mockVideos.map((video) => (
-                  <TableRow key={video.id}>
-                    <TableCell className="text-xs font-mono">{video.id}</TableCell>
-                    <TableCell className="text-sm max-w-[200px] truncate">{video.script}</TableCell>
-                    <TableCell>
-                      <Badge variant={
-                        video.status === "ready" ? "default" :
-                        video.status === "error" ? "destructive" : "secondary"
-                      } className="capitalize">
-                        {video.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(video.created_at).toLocaleDateString("en-IN")}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              <Video className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+              Admin video management coming soon
+            </div>
           </TabsContent>
         </Tabs>
       </DialogContent>

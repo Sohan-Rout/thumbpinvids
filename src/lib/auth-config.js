@@ -23,7 +23,7 @@ export const authOptions = {
         if (!user || !user.hashedPassword) return null;
         const valid = await bcrypt.compare(credentials.password, user.hashedPassword);
         if (!valid) return null;
-        return { id: user.id, email: user.email, name: user.name || user.email };
+        return { id: user.id, email: user.email, name: user.name || user.email, image: user.image || null };
       },
     }),
   ],
@@ -36,7 +36,7 @@ export const authOptions = {
       if (account.provider === "google") {
         await dbConnect();
         const existingUser = await User.findOne({ email: user.email });
-        
+
         if (!existingUser) {
           const newUser = await User.create({
             email: user.email,
@@ -47,12 +47,17 @@ export const authOptions = {
           });
           user.id = newUser._id.toString();
         } else {
-          // Update googleId if missing
           if (!existingUser.googleId) {
             existingUser.googleId = user.id;
             await existingUser.save();
           }
+          if (user.image && !existingUser.image) {
+            existingUser.image = user.image;
+            await existingUser.save();
+          }
           user.id = existingUser._id.toString();
+          user.name = existingUser.name || user.name;
+          user.image = existingUser.image || user.image;
         }
       }
       return true;
@@ -60,12 +65,16 @@ export const authOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.sub = user.id;
+        token.name = user.name;
+        token.picture = user.image;
       }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.sub;
+        session.user.name = token.name;
+        session.user.image = token.picture;
       }
       return session;
     },
@@ -75,6 +84,10 @@ export const authOptions = {
       return `${baseUrl}/app`;
     },
   },
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+    updateAge: 24 * 60 * 60, // 24 hours
+  },
   secret: process.env.NEXTAUTH_SECRET,
 };

@@ -15,7 +15,6 @@ export default function DashboardLayout({ children }) {
           <Separator orientation="vertical" className="h-4" />
           <div className="flex-1" />
           <AdminModal />
-          <ThemeToggle />
         </header>
 
         {/* Page Content */}

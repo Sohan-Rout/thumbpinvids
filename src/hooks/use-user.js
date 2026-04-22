@@ -2,11 +2,10 @@
 
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
-import { mockUser } from "@/lib/mock-data";
 
 /**
  * Hook to get the current authenticated user and their profile details.
- * Replaces Supabase auth with NextAuth.
+ * All data comes from MongoDB via /api/user/profile.
  */
 export function useUser() {
   const { data: session, status } = useSession();
@@ -22,14 +21,20 @@ export function useUser() {
             const data = await res.json();
             setProfile(data.user);
           } else {
-            // Fallback to session user and mock credits
+            // fallback to session data only
             setProfile({
               ...session.user,
-              credits: 100 // Default for now
+              credits: 0,
+              plan: "free",
             });
           }
         } catch (error) {
           console.error("[useUser] Error fetching profile:", error);
+          setProfile({
+            ...session.user,
+            credits: 0,
+            plan: "free",
+          });
         } finally {
           setLoadingProfile(false);
         }
@@ -49,6 +54,6 @@ export function useUser() {
     profile,
     loading: isLoading,
     credits: profile?.credits ?? 0,
-    status
+    status,
   };
 }

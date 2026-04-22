@@ -1,27 +1,49 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, Suspense, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
   PersonStanding,
   Upload,
   X,
-  ImagePlus,
-  MapPin,
+  User,
   FileText,
   Sparkles,
   Loader2,
-  Play,
   CheckCircle2,
   ChevronRight,
   Info,
   Download,
+  ImagePlus,
+  Play,
+  RotateCcw,
+  PenLine,
+  Layers,
+  Check,
+  MapPin,
+  Building2,
+  Save,
 } from "lucide-react";
 import { AssetSelector } from "@/components/dashboard/asset-selector";
 
-const MAX_SCRIPT = 450;
+const MAX_SCRIPT = 200;
+
+const RE_AVATARS = Array.from({ length: 6 }, (_, i) => ({
+  id: `re-${i + 1}`,
+  name: `RE Agent ${i + 1}`,
+  url: `/avatars/re/realestate${i + 1}.png`,
+}));
+
+const LANGUAGES = [
+  { id: "english", label: "English" },
+  { id: "hindi", label: "Hindi" },
+  { id: "hinglish", label: "Hinglish" },
+];
 
 async function compressImage(file, maxDimension = 1200, quality = 0.7) {
   return new Promise((resolve) => {
@@ -32,32 +54,16 @@ async function compressImage(file, maxDimension = 1200, quality = 0.7) {
         const canvas = document.createElement("canvas");
         let width = img.width;
         let height = img.height;
-
         if (width > height) {
-          if (width > maxDimension) {
-            height *= maxDimension / width;
-            width = maxDimension;
-          }
+          if (width > maxDimension) { height *= maxDimension / width; width = maxDimension; }
         } else {
-          if (height > maxDimension) {
-            width *= maxDimension / height;
-            height = maxDimension;
-          }
+          if (height > maxDimension) { width *= maxDimension / height; height = maxDimension; }
         }
-
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
         canvas.toBlob(
-          (blob) => {
-            const compressedFile = new File([blob], file.name, {
-              type: "image/jpeg",
-              lastModified: Date.now(),
-            });
-            resolve(compressedFile);
-          },
+          (blob) => resolve(new File([blob], file.name, { type: "image/jpeg", lastModified: Date.now() })),
           "image/jpeg",
           quality
         );
@@ -68,180 +74,106 @@ async function compressImage(file, maxDimension = 1200, quality = 0.7) {
   });
 }
 
-function splitScript(script, parts = 3) {
-  const trimmed = script.trim();
-  if (!trimmed) return [];
-  // Try to split on sentence boundaries, otherwise split evenly
-  const sentences = trimmed.match(/[^.!?]+[.!?]+/g) || [trimmed];
-  if (sentences.length >= parts) {
-    // Merge into ~parts groups
-    const groups = [];
-    const size = Math.ceil(sentences.length / parts);
-    for (let i = 0; i < parts; i++) {
-      const chunk = sentences.slice(i * size, (i + 1) * size).join(" ").trim();
-      if (chunk) groups.push(chunk);
-    }
-    return groups.length > 0 ? groups : [trimmed];
-  }
-  // Fall back: split evenly by chars
-  const chunkSize = Math.ceil(trimmed.length / parts);
-  const result = [];
-  for (let i = 0; i < parts; i++) {
-    const chunk = trimmed.slice(i * chunkSize, (i + 1) * chunkSize).trim();
-    if (chunk) result.push(chunk);
-  }
-  return result;
+function dataUrlToFile(dataUrl, filename) {
+  const arr = dataUrl.split(",");
+  const mime = arr[0].match(/:(.*?);/)?.[1] || "image/png";
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) u8arr[n] = bstr.charCodeAt(n);
+  return new File([u8arr], filename, { type: mime });
 }
 
-function ImageUploadBox({ label, icon: Icon, images, onAdd, onRemove, maxImages, hint, type = "all" }) {
+// ─── Multi-image upload for properties ───────────────────────────────────────
+function MultiImageUploadBox({ images, onAdd, onRemove, maxImages = 3 }) {
   const inputRef = useRef(null);
 
   function handleFiles(files) {
     const valid = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    const remaining = maxImages - images.length;
-    valid.slice(0, remaining).forEach((f) => onAdd(f));
-    if (!valid.length) toast.error("Please upload image files (JPEG, PNG, WebP)");
-  }
-
-  async function handleAssetSelect(asset) {
-    try {
-      const response = await fetch(asset.url);
-      const blob = await response.blob();
-      const file = new File([blob], asset.name, { type: blob.type });
-      onAdd(file);
-    } catch (error) {
-      toast.error("Failed to load asset from library");
-    }
+    valid.forEach((f) => {
+      if (images.length < maxImages) onAdd(f);
+    });
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Icon className="w-4 h-4 text-primary" />
-        <span className="text-sm font-semibold">{label}</span>
-        <span className="text-xs text-muted-foreground ml-auto">{images.length}/{maxImages}</span>
+        <Building2 className="w-4 h-4 text-primary" />
+        <span className="text-sm font-semibold">Property Images</span>
+        <Badge variant="outline" className="text-[10px] ml-auto">{images.length}/{maxImages}</Badge>
       </div>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <p className="text-xs text-muted-foreground">
+        Upload 1-{maxImages} property images. A composite will be created for each.
+      </p>
 
-      {images.length < maxImages && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            onDragOver={(e) => e.preventDefault()}
-            className="border-2 border-dashed border-border hover:border-primary/60 rounded-xl p-6 flex flex-col items-center justify-center gap-2 text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
-          >
-            <Upload className="w-5 h-5 group-hover:text-primary transition-colors" />
-            <p className="text-xs font-medium">Click to upload</p>
-          </button>
-          
-          <AssetSelector 
-            type={type} 
-            title={`Select ${label}`}
-            onSelect={handleAssetSelect}
-          />
-        </div>
-      )}
-
-      {/* Preview grid */}
       {images.length > 0 && (
-        <div className="flex gap-3 flex-wrap pt-2">
+        <div className={`grid gap-3 ${images.length === 1 ? "grid-cols-1 max-w-xs mx-auto" : images.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
           {images.map((img, i) => (
-            <div key={i} className="relative w-28 h-28 rounded-xl overflow-hidden border border-border shadow-md group animate-in zoom-in-50 duration-200">
-              <img
-                src={URL.createObjectURL(img)}
-                alt={`${label} ${i + 1}`}
-                className="w-full h-full object-cover"
-              />
+            <div key={i} className="relative rounded-xl overflow-hidden border border-border/50 shadow-md group aspect-[4/3]">
+              <img src={URL.createObjectURL(img)} alt={`Property ${i + 1}`} className="w-full h-full object-cover" />
               <button
                 onClick={() => onRemove(i)}
-                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-destructive"
+                className="absolute top-2 right-2 w-6 h-6 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
               >
-                <X className="w-4 h-4 text-white" />
+                <X className="w-3 h-3 text-white" />
               </button>
+              <Badge className="absolute top-2 left-2 bg-black/70 text-white border-0 text-[10px] backdrop-blur-sm">
+                <MapPin className="w-2.5 h-2.5 mr-0.5" /> Property {i + 1}
+              </Badge>
             </div>
           ))}
         </div>
       )}
 
-      <input
-        ref={inputRef}
-        type="file"
-        className="hidden"
-        accept="image/*"
-        multiple={maxImages > 1}
-        onChange={(e) => handleFiles(e.target.files)}
-      />
+      {images.length < maxImages && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("border-primary", "bg-primary/5"); }}
+          onDragLeave={(e) => { e.currentTarget.classList.remove("border-primary", "bg-primary/5"); }}
+          onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove("border-primary", "bg-primary/5"); handleFiles(e.dataTransfer.files); }}
+          onClick={() => inputRef.current?.click()}
+          className="border-2 border-dashed border-border/50 rounded-xl p-6 flex flex-col items-center gap-2 hover:border-primary/40 hover:bg-primary/5 transition-all cursor-pointer"
+        >
+          <ImagePlus className="w-5 h-5 text-primary" />
+          <p className="text-xs text-muted-foreground">
+            {images.length === 0 ? "Upload property images (1-3)" : `Add more (${maxImages - images.length} remaining)`}
+          </p>
+          <input ref={inputRef} type="file" accept="image/*" multiple className="hidden"
+            onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files); }} />
+        </div>
+      )}
     </div>
   );
 }
 
-function VideoCard({ index, video, status, totalParts }) {
-  const isReady = status === "ready";
+// ─── Video Result Card ───────────────────────────────────────────────────────
+function VideoCard({ status, video }) {
   const isGenerating = status === "generating";
-  const isPending = status === "pending";
+  const isReady = status === "ready" && video?.videoUrl;
 
   return (
-    <div
-      className={`rounded-2xl border transition-all duration-500 overflow-hidden ${
-        isReady
-          ? "border-primary/40 bg-card shadow-lg"
-          : isGenerating
-          ? "border-amber-500/40 bg-amber-500/5 animate-pulse"
-          : "border-border/40 bg-muted/30 opacity-50"
-      }`}
-    >
+    <div className={`rounded-xl border transition-all ${
+      isReady ? "border-primary/40 bg-card shadow-lg" : isGenerating ? "border-amber-500/40 bg-amber-500/5 animate-pulse" : "border-border/40 bg-muted/30 opacity-50"
+    }`}>
       <div className="p-3 flex items-center gap-3">
-        <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${
-            isReady
-              ? "gradient-bg text-white"
-              : isGenerating
-              ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
-              : "bg-muted text-muted-foreground"
-          }`}
-        >
-          {isReady ? <CheckCircle2 className="w-4 h-4" /> : index + 1}
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${
+          isReady ? "gradient-bg text-white" : isGenerating ? "bg-amber-500/20 text-amber-600 dark:text-amber-400" : "bg-muted text-muted-foreground"
+        }`}>
+          {isReady ? <CheckCircle2 className="w-4 h-4" /> : isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : "1"}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold">
-            {isReady ? `Video ${index + 1}` : isGenerating ? (index === 0 ? "Generating..." : "Extending...") : `Video ${index + 1}`}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {isReady
-              ? "Ready to watch"
-              : isGenerating
-              ? index === 0
-                ? "Creating first clip with your images..."
-                : `Extending from video ${index}...`
-              : "Waiting..."}
-          </p>
+          <p className="text-sm font-semibold">{isReady ? "Video Ready!" : isGenerating ? "Generating..." : "Waiting..."}</p>
+          <p className="text-xs text-muted-foreground">{isReady ? "Your property showcase is ready" : isGenerating ? "Crafting voice & video..." : "Pending"}</p>
         </div>
-        {isGenerating && <Loader2 className="w-4 h-4 animate-spin text-amber-500 shrink-0" />}
       </div>
-
       {isReady && video?.videoUrl && (
         <div className="px-3 pb-3">
-          <div className="rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-80 mx-auto relative">
-            <video
-              src={video.videoUrl}
-              controls
-              className="w-full h-full object-contain"
-              autoPlay={false}
-            >
-              Your browser does not support video.
-            </video>
+          <div className="rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-80 mx-auto">
+            <video src={video.videoUrl} controls className="w-full h-full object-contain" />
           </div>
           <div className="flex justify-end mt-2">
-            <a
-              href={video.videoUrl}
-              download={`walkthrough-${index + 1}.mp4`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Download
+            <a href={video.videoUrl} download="real-estate-video.mp4" target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors">
+              <Download className="w-3.5 h-3.5" /> Download
             </a>
           </div>
         </div>
@@ -250,84 +182,194 @@ function VideoCard({ index, video, status, totalParts }) {
   );
 }
 
-const STEPS = ["Person", "Location", "Script"];
+// ─── Main 3-Step Page ────────────────────────────────────────────────────────
+const STEPS = ["Upload & Avatar", "Pick Composite", "Script & Generate"];
 
-export default function AIWalkthroughPage() {
+function RealEstateVideoContent() {
+  const searchParams = useSearchParams();
+  const initialScript = searchParams.get("script");
+
   const [step, setStep] = useState(0);
 
-  // Images
-  const [personImages, setPersonImages] = useState([]);
-  const [locationImages, setLocationImages] = useState([]);
+  // Step 0: Property images + Avatar (combined)
+  const [propertyImages, setPropertyImages] = useState([]);
+  const [avatarMode, setAvatarMode] = useState("prebuilt");
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [uploadedAvatarFile, setUploadedAvatarFile] = useState(null);
+  const [avatarPrompt, setAvatarPrompt] = useState("");
+  const [avatarVariantCount, setAvatarVariantCount] = useState(1);
+  const [generatedAvatars, setGeneratedAvatars] = useState([]);
+  const [generatingAvatar, setGeneratingAvatar] = useState(false);
 
-  // Script
+  // Step 1: Composites
+  const [composites, setComposites] = useState([]);
+  const [generatingComposites, setGeneratingComposites] = useState(false);
+  const [selectedCompositeIndex, setSelectedCompositeIndex] = useState(null);
+  const [savingComposites, setSavingComposites] = useState(false);
+
+  // Step 2: Script + Generate (voice is backend-only)
   const [script, setScript] = useState("");
-  const [numParts, setNumParts] = useState(1);
-
-  // Generation state
+  const [language, setLanguage] = useState("english");
+  const [generatingScript, setGeneratingScript] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [videoStatuses, setVideoStatuses] = useState([]); // "pending" | "generating" | "ready"
-  const [videos, setVideos] = useState([]); // [{ videoUrl }]
-  const [done, setDone] = useState(false);
+  const [videoStatus, setVideoStatus] = useState("idle");
+  const [videoResult, setVideoResult] = useState(null);
 
-  const step1Valid = personImages.length >= 1;
-  const step2Valid = locationImages.length >= 1;
-  const step3Valid = script.trim().length >= 20;
+  useEffect(() => {
+    if (initialScript) { setScript(initialScript); setStep(2); }
+  }, [initialScript]);
 
-  function addPersonImage(file) {
-    setPersonImages((prev) => [...prev, file]);
-  }
-  function removePersonImage(i) {
-    setPersonImages((prev) => prev.filter((_, idx) => idx !== i));
-  }
-  function addLocationImage(file) {
-    setLocationImages((prev) => [...prev, file]);
-  }
-  function removeLocationImage(i) {
-    setLocationImages((prev) => prev.filter((_, idx) => idx !== i));
-  }
+  const selectedComposite = selectedCompositeIndex !== null ? composites[selectedCompositeIndex] : null;
 
-  // Compute max location images based on person count (total ≤ 3, person gets priority)
-  const personSlots = Math.min(personImages.length, 2);
-  const maxLocationFromState = Math.min(2, 3 - Math.min(personSlots, 2));
-  // If no person images yet, allow up to 2 location (will be recalculated on generate)
-  const maxLocationImages = personImages.length > 0 ? maxLocationFromState : 2;
+  // Validity
+  const step0Valid = propertyImages.length >= 1 && !!selectedAvatar;
+  const step1Valid = selectedCompositeIndex !== null;
+  const step2Valid = script.trim().length >= 15;
 
-  async function handleGenerate() {
-    if (!step1Valid || !step2Valid || !step3Valid) return;
-
-    const parts = splitScript(script, numParts);
-    if (parts.length === 0) {
-      toast.error("Could not split script. Please try again.");
-      return;
+  // ── Avatar generation ──────────────────────────────────────────────────────
+  async function handleGenerateAvatars() {
+    if (!avatarPrompt.trim() || avatarPrompt.trim().length < 10) return;
+    setGeneratingAvatar(true);
+    setGeneratedAvatars([]);
+    try {
+      const res = await fetch("/api/product-video/generate-avatar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: avatarPrompt.trim(), variants: avatarVariantCount }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setGeneratedAvatars(data.images || []);
+      toast.success(`Generated ${data.images.length} avatar(s)!`);
+    } catch (err) {
+      toast.error("Avatar generation failed", { description: err.message });
+    } finally {
+      setGeneratingAvatar(false);
     }
+  }
 
-    // Init video slots
-    const total = parts.length;
-    setVideoStatuses(Array(total).fill("pending"));
-    setVideos(Array(total).fill(null));
-    setDone(false);
+  // ── Generate composites ────────────────────────────────────────────────────
+  async function handleGenerateComposites() {
+    if (!selectedAvatar || propertyImages.length === 0) return;
+    setGeneratingComposites(true);
+    setComposites([]);
+    setSelectedCompositeIndex(null);
+    try {
+      let avatarFile;
+      if (selectedAvatar.file) {
+        avatarFile = await compressImage(selectedAvatar.file);
+      } else {
+        const res = await fetch(selectedAvatar.url);
+        const blob = await res.blob();
+        avatarFile = await compressImage(new File([blob], "avatar.png", { type: blob.type }));
+      }
+
+      const results = [];
+      for (let i = 0; i < propertyImages.length; i++) {
+        toast.info(`Creating composite ${i + 1}/${propertyImages.length}...`, { id: "composite-progress" });
+        const compressedProperty = await compressImage(propertyImages[i]);
+        const fd = new FormData();
+        fd.append("avatarImage", avatarFile);
+        fd.append("propertyImage", compressedProperty);
+
+        const res = await fetch("/api/real-estate-video/composite", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Composite ${i + 1} failed`);
+
+        results.push({
+          url: data.compositeUrl,
+          file: dataUrlToFile(data.compositeUrl, `re-composite-${i}.png`),
+          title: `Property ${i + 1}`,
+          propertyIndex: i,
+        });
+      }
+
+      setComposites(results);
+      toast.success(`${results.length} composite(s) ready — pick your best!`, { id: "composite-progress" });
+      if (results.length === 1) setSelectedCompositeIndex(0);
+    } catch (err) {
+      toast.error("Composite generation failed", { description: err.message });
+    } finally {
+      setGeneratingComposites(false);
+    }
+  }
+
+  // ── Save unused composites to Asset Library ────────────────────────────────
+  async function saveUnusedComposites(selected) {
+    if (composites.length <= 1) return;
+    setSavingComposites(true);
+    try {
+      const payload = {
+        composites: composites.map((c) => ({ dataUrl: c.url, name: c.title })),
+        selectedIndex: selected,
+      };
+      const res = await fetch("/api/real-estate-video/save-composites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.saved?.length > 0) {
+        toast.success(`${data.saved.length} composite(s) saved to Asset Library`, {
+          description: "Animate them anytime from the Asset Library!",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to save composites:", err);
+    } finally {
+      setSavingComposites(false);
+    }
+  }
+
+  // ── Proceed from composite pick → script ───────────────────────────────────
+  async function handleCompositeNext() {
+    if (selectedCompositeIndex === null) return;
+    saveUnusedComposites(selectedCompositeIndex); // background
+    setStep(2);
+  }
+
+  // ── Script generation ──────────────────────────────────────────────────────
+  async function handleGenerateScript() {
+    if (!selectedComposite) return;
+    setGeneratingScript(true);
+    try {
+      const fd = new FormData();
+      fd.append("compositeImage", selectedComposite.file);
+      const propIdx = selectedComposite.propertyIndex ?? 0;
+      if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
+      fd.append("language", language);
+      fd.append("tone", "professional");
+
+      const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Script generation failed");
+      setScript(data.script);
+      toast.success("Script generated!");
+    } catch (err) {
+      toast.error("Script generation failed", { description: err.message });
+    } finally {
+      setGeneratingScript(false);
+    }
+  }
+
+  // ── Video generation (script → backend handles voice → Veo 3.1) ───────────
+  async function handleGenerateVideo() {
+    if (!selectedComposite || !script.trim()) return;
     setGenerating(true);
+    setVideoStatus("generating");
+    setVideoResult(null);
 
     try {
-      toast.info("Preparing images...");
-      const compressedPerson = await Promise.all(personImages.slice(0, 2).map(f => compressImage(f)));
-      const compressedLocation = await Promise.all(locationImages.slice(0, 2).map(f => compressImage(f)));
-
       const fd = new FormData();
-      compressedPerson.forEach((f) => fd.append("personImages", f));
-      compressedLocation.forEach((f) => fd.append("locationImages", f));
-      fd.append("scriptParts", JSON.stringify(parts));
+      fd.append("compositeImage", selectedComposite.file);
+      fd.append("script", script.trim());
+      // No voicePrompt — backend will generate it internally
 
-      const response = await fetch("/api/ai-walkthrough/generate", {
-        method: "POST",
-        body: fd,
-      });
-
+      const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || "Generation failed");
       }
-
       if (!response.body) throw new Error("No response stream");
 
       const reader = response.body.getReader();
@@ -337,281 +379,446 @@ export default function AIWalkthroughPage() {
       while (true) {
         const { value, done: streamDone } = await reader.read();
         if (streamDone) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n\n");
         buffer = lines.pop() ?? "";
-
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6));
-            handleSSEEvent(event, total);
+            if (event.type === "progress") toast.info(event.message, { id: "video-gen" });
+            if (event.type === "video_ready") {
+              setVideoStatus("ready");
+              setVideoResult({ videoUrl: event.videoUrl });
+              toast.success("🏠 Video ready!", { id: "video-gen" });
+            }
+            if (event.type === "error") {
+              toast.error("Generation failed", { description: event.message });
+              setVideoStatus("error");
+            }
           } catch {}
         }
       }
     } catch (err) {
       console.error(err);
-      toast.error("Generation failed", { description: err.message });
-      setVideoStatuses((prev) => prev.map((s) => (s === "generating" ? "error" : s)));
+      toast.error("Video generation failed", { description: err.message });
+      setVideoStatus("error");
     } finally {
       setGenerating(false);
     }
   }
 
-  function handleSSEEvent(event, total) {
-    if (event.type === "progress") {
-      const { videoIndex } = event;
-      setVideoStatuses((prev) => {
-        const next = [...prev];
-        next[videoIndex] = "generating";
-        return next;
-      });
-      toast.info(event.message, { id: `video-progress-${videoIndex}` });
-    }
-
-    if (event.type === "video_ready") {
-      const { videoIndex, videoUrl } = event;
-      setVideoStatuses((prev) => {
-        const next = [...prev];
-        next[videoIndex] = "ready";
-        return next;
-      });
-      setVideos((prev) => {
-        const next = [...prev];
-        next[videoIndex] = { videoUrl };
-        return next;
-      });
-      toast.success(`🎬 Video ${videoIndex + 1} ready!`, { id: `video-progress-${videoIndex}` });
-    }
-
-    if (event.type === "done") {
-      setDone(true);
-      toast.success(`✅ All ${event.totalVideos} videos generated!`);
-    }
-
-    if (event.type === "error") {
-      toast.error("Generation error", { description: event.message });
-    }
-  }
-
   function reset() {
-    setPersonImages([]);
-    setLocationImages([]);
+    setPropertyImages([]);
+    setSelectedAvatar(null);
+    setUploadedAvatarFile(null);
+    setGeneratedAvatars([]);
+    setComposites([]);
+    setSelectedCompositeIndex(null);
     setScript("");
-    setVideoStatuses([]);
-    setVideos([]);
-    setDone(false);
+    setVideoStatus("idle");
+    setVideoResult(null);
     setGenerating(false);
     setStep(0);
   }
 
-  const showResults = videoStatuses.length > 0;
+  const showResults = videoStatus !== "idle";
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 animate-fade-in">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-xl gradient-bg flex items-center justify-center shadow-md">
-          <PersonStanding className="w-5 h-5 text-white" />
+          <Building2 className="w-5 h-5 text-white" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold font-heading">AI Walkthrough Video</h1>
+          <h1 className="text-2xl font-bold font-heading">Real Estate Video</h1>
           <p className="text-sm text-muted-foreground">
-            Turn your photo + a location into a cinematic walkthrough — powered by Google Veo.
+            3 steps to a cinematic property showcase — powered by Gemini & Veo 3.1
           </p>
         </div>
       </div>
 
-      {/* Info banner */}
+      {/* Info */}
       <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex gap-2.5 mb-6">
         <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Upload <strong className="text-foreground">1–2 photos of a person</strong> and <strong className="text-foreground">1–2 location images</strong>. Write a short script (max 450 chars) — we'll split it into clips and stitch them together using Veo's video extension. Supporting English, Hindi, and more.
+          <strong className="text-foreground">1.</strong> Upload properties + pick avatar →{" "}
+          <strong className="text-foreground">2.</strong> Choose your best composite →{" "}
+          <strong className="text-foreground">3.</strong> Add script & generate!
         </p>
       </div>
 
-      {/* ── Step progress ── */}
+      {/* 3 Steps */}
       {!showResults && (
         <div className="flex items-center gap-1 mb-7">
           {STEPS.map((s, i) => (
-            <div key={s} className="flex items-center gap-1 flex-1">
+            <div key={s} className="flex items-center gap-1 flex-1 min-w-0">
               <button
-                onClick={() => {
-                  if (i < step || (i === 1 && step1Valid) || (i === 2 && step1Valid && step2Valid)) setStep(i);
-                }}
-                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-all ${
-                  step === i
-                    ? "gradient-bg text-white shadow-md"
-                    : i < step
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground bg-muted/50"
+                onClick={() => { if (i < step) setStep(i); }}
+                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full transition-all whitespace-nowrap cursor-pointer ${
+                  step === i ? "gradient-bg text-white shadow-md" : i < step ? "bg-primary/10 text-primary" : "text-muted-foreground bg-muted/50"
                 }`}
               >
-                {i < step ? (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                ) : (
-                  <span className="w-4 h-4 rounded-full border text-[10px] flex items-center justify-center font-bold">
-                    {i + 1}
-                  </span>
+                {i < step ? <CheckCircle2 className="w-3.5 h-3.5" /> : (
+                  <span className="w-5 h-5 rounded-full border text-[11px] flex items-center justify-center font-bold">{i + 1}</span>
                 )}
-                <span className="hidden sm:inline">{s}</span>
+                {s}
               </button>
               {i < STEPS.length - 1 && (
-                <div className={`h-px flex-1 transition-colors ${i < step ? "bg-primary/40" : "bg-border"}`} />
+                <div className={`h-px flex-1 min-w-3 transition-colors ${i < step ? "bg-primary/40" : "bg-border"}`} />
               )}
             </div>
           ))}
         </div>
       )}
 
-      {/* ── STEP 0: Person ── */}
+      {/* ══════════════ STEP 0: Upload Properties + Pick Avatar ══════════════ */}
       {!showResults && step === 0 && (
-        <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <ImageUploadBox
-            label="Person Photo"
-            icon={PersonStanding}
-            images={personImages}
-            onAdd={addPersonImage}
-            onRemove={removePersonImage}
-            maxImages={2}
-            type="avatars"
-            hint="Upload 1–2 photos of the person (full body or half body). These will guide Veo on what the person looks like."
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {/* Property Images */}
+          <MultiImageUploadBox
+            images={propertyImages}
+            onAdd={(file) => setPropertyImages((prev) => [...prev, file].slice(0, 3))}
+            onRemove={(i) => setPropertyImages((prev) => prev.filter((_, idx) => idx !== i))}
+            maxImages={3}
           />
 
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Choose Your Presenter</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          {/* Avatar selection */}
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              {[
+                { id: "prebuilt", label: "RE Agents", icon: PersonStanding },
+                { id: "upload", label: "Upload", icon: Upload },
+                { id: "generate", label: "AI Generate", icon: Sparkles },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => { setAvatarMode(m.id); setSelectedAvatar(null); }}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                    avatarMode === m.id ? "gradient-bg text-white shadow-md" : "border border-border hover:border-primary/40 text-muted-foreground"
+                  }`}
+                >
+                  <m.icon className="w-3.5 h-3.5" />
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {avatarMode === "prebuilt" && (
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                {RE_AVATARS.map((av) => (
+                  <button
+                    key={av.id}
+                    onClick={() => setSelectedAvatar({ url: av.url, file: null, name: av.name })}
+                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all cursor-pointer group ${
+                      selectedAvatar?.url === av.url ? "border-primary ring-2 ring-primary/30 scale-105" : "border-border/50 hover:border-primary/50"
+                    }`}
+                  >
+                    <img src={av.url} alt={av.name} className="w-full h-full object-cover" />
+                    {selectedAvatar?.url === av.url && (
+                      <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                        <CheckCircle2 className="w-3 h-3 text-white" />
+                      </div>
+                    )}
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-sm px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <p className="text-[10px] text-white text-center truncate">{av.name}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {avatarMode === "upload" && (
+              <div className="space-y-2">
+                {uploadedAvatarFile ? (
+                  <div className="relative rounded-xl overflow-hidden border border-border/50 shadow-md bg-card group max-w-[200px]">
+                    <img src={URL.createObjectURL(uploadedAvatarFile)} alt="Avatar" className="w-full aspect-square object-cover" />
+                    <button
+                      onClick={() => { setUploadedAvatarFile(null); setSelectedAvatar(null); }}
+                      className="absolute top-2 right-2 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5 text-white" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      onClick={() => document.getElementById("avatar-upload-input")?.click()}
+                      className="border-2 border-dashed border-border/50 rounded-xl p-6 flex flex-col items-center gap-2 hover:border-primary/40 hover:bg-primary/5 transition-all cursor-pointer"
+                    >
+                      <User className="w-5 h-5 text-primary" />
+                      <p className="text-xs text-muted-foreground">Upload a clear photo of the presenter</p>
+                      <input id="avatar-upload-input" type="file" accept="image/*" className="hidden" onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setUploadedAvatarFile(file);
+                          setSelectedAvatar({ url: URL.createObjectURL(file), file, name: "Custom" });
+                        }
+                      }} />
+                    </div>
+                    <AssetSelector type="avatars" onSelect={async (asset) => {
+                      try {
+                        const res = await fetch(asset.url);
+                        const blob = await res.blob();
+                        const file = new File([blob], asset.name, { type: blob.type });
+                        setUploadedAvatarFile(file);
+                        setSelectedAvatar({ url: URL.createObjectURL(file), file, name: asset.name });
+                      } catch (err) { toast.error("Failed to load asset"); }
+                    }} />
+                  </>
+                )}
+              </div>
+            )}
+
+            {avatarMode === "generate" && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-sm">Describe the avatar</Label>
+                  <Textarea
+                    value={avatarPrompt}
+                    onChange={(e) => setAvatarPrompt(e.target.value)}
+                    placeholder="e.g., A confident Indian man in his 30s wearing formal business attire, warm professional smile..."
+                    className="min-h-[80px] resize-none text-sm"
+                    maxLength={500}
+                  />
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Variants</Label>
+                    <div className="flex gap-1.5">
+                      {[1, 2, 3].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setAvatarVariantCount(n)}
+                          className={`w-8 h-8 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            avatarVariantCount === n ? "gradient-bg text-white" : "border border-border text-muted-foreground hover:border-primary/40"
+                          }`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <Button onClick={handleGenerateAvatars} disabled={generatingAvatar || avatarPrompt.trim().length < 10} className="gradient-bg text-white shadow-md cursor-pointer mt-4" size="sm">
+                    {generatingAvatar ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate</>}
+                  </Button>
+                </div>
+                {generatedAvatars.length > 0 && (
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    {generatedAvatars.map((av, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          const file = dataUrlToFile(av.url, `avatar-re-${i}.png`);
+                          setSelectedAvatar({ url: av.url, file, name: `Generated ${i + 1}` });
+                        }}
+                        className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                          selectedAvatar?.url === av.url ? "border-primary ring-2 ring-primary/30 scale-105" : "border-border/50 hover:border-primary/50"
+                        }`}
+                      >
+                        <img src={av.url} alt={`V${i + 1}`} className="w-full h-full object-cover" />
+                        {selectedAvatar?.url === av.url && (
+                          <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                          </div>
+                        )}
+                        <Badge className="absolute top-1 left-1 bg-primary/80 text-white text-[8px] px-1 py-0 border-0">V{i + 1}</Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {selectedAvatar && (
+              <div className="flex items-center gap-2 pt-1">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span className="text-sm">Presenter: <strong>{selectedAvatar.name}</strong></span>
+              </div>
+            )}
+          </div>
+
+          {/* Next */}
           <div className="flex justify-end">
-            <Button
-              onClick={() => setStep(1)}
-              disabled={!step1Valid}
-              className="gradient-bg text-white shadow-md cursor-pointer"
-            >
-              Next: Location
-              <ChevronRight className="w-4 h-4 ml-1" />
+            <Button onClick={() => { setStep(1); handleGenerateComposites(); }} disabled={!step0Valid} className="gradient-bg text-white shadow-md cursor-pointer px-6">
+              Create Composites <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 1: Location ── */}
+      {/* ══════════════ STEP 1: Pick Composite ══════════════ */}
       {!showResults && step === 1 && (
         <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <ImageUploadBox
-            label="Location / Surroundings"
-            icon={MapPin}
-            images={locationImages}
-            onAdd={addLocationImage}
-            onRemove={removeLocationImage}
-            maxImages={maxLocationImages}
-            type="products"
-            hint={`Upload 1–${maxLocationImages} photo(s) of the space or surroundings. These set the background/environment of the video.`}
-          />
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold">Pick Your Best Composite</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Click your favorite — the rest get saved to your <strong>Asset Library</strong> for later.
+          </p>
+
+          {generatingComposites && (
+            <div className="rounded-xl border-2 border-dashed border-amber-500/30 p-8 flex flex-col items-center gap-3 bg-amber-500/5">
+              <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+              <p className="text-sm text-muted-foreground">Generating composites...</p>
+              <p className="text-xs text-muted-foreground">~15-30 seconds each</p>
+            </div>
+          )}
+
+          {composites.length > 0 && !generatingComposites && (
+            <>
+              <div className={`grid gap-4 ${composites.length === 1 ? "grid-cols-1 max-w-xs mx-auto" : composites.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+                {composites.map((comp, i) => (
+                  <div
+                    key={i}
+                    onClick={() => setSelectedCompositeIndex(i)}
+                    className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer group ${
+                      selectedCompositeIndex === i
+                        ? "border-primary ring-2 ring-primary/30 scale-[1.02]"
+                        : "border-border/50 hover:border-primary/50"
+                    }`}
+                  >
+                    <img src={comp.url} alt={comp.title} className="w-full rounded-xl" />
+                    <Badge className="absolute top-2 left-2 bg-black/70 text-white border-0 text-[10px] backdrop-blur-sm">
+                      <MapPin className="w-2.5 h-2.5 mr-0.5" /> {comp.title}
+                    </Badge>
+                    {selectedCompositeIndex === i && (
+                      <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-lg">
+                        <Check className="w-3.5 h-3.5 text-white" />
+                      </div>
+                    )}
+                    {selectedCompositeIndex !== null && selectedCompositeIndex !== i && composites.length > 1 && (
+                      <div className="absolute bottom-2 right-2 opacity-80">
+                        <Badge variant="outline" className="text-[9px] bg-black/50 text-white border-white/20 backdrop-blur-sm">
+                          <Save className="w-2.5 h-2.5 mr-0.5" /> Saved to Library
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-center">
+                <Button variant="outline" size="sm" onClick={handleGenerateComposites} disabled={generatingComposites} className="cursor-pointer text-xs">
+                  <RotateCcw className="w-3 h-3 mr-1" /> Regenerate All
+                </Button>
+              </div>
+            </>
+          )}
 
           <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep(0)} className="cursor-pointer">
-              Back
-            </Button>
-            <Button
-              onClick={() => setStep(2)}
-              disabled={!step2Valid}
-              className="gradient-bg text-white shadow-md cursor-pointer"
-            >
-              Next: Script
-              <ChevronRight className="w-4 h-4 ml-1" />
+            <Button variant="outline" onClick={() => setStep(0)} className="cursor-pointer">Back</Button>
+            <Button onClick={handleCompositeNext} disabled={!step1Valid || savingComposites} className="gradient-bg text-white shadow-md cursor-pointer">
+              {savingComposites ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Saving...</> : <>Next: Script & Generate <ChevronRight className="w-4 h-4 ml-1" /></>}
             </Button>
           </div>
         </div>
       )}
 
-      {/* ── STEP 2: Script ── */}
+      {/* ══════════════ STEP 2: Script + Generate ══════════════ */}
       {!showResults && step === 2 && (
         <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-primary" />
-              <span className="text-sm font-semibold">Script</span>
-              <span
-                className={`text-xs ml-auto font-mono ${
-                  script.length > MAX_SCRIPT ? "text-destructive font-bold" : "text-muted-foreground"
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold">Script & Generate</span>
+          </div>
+
+          {/* Composite preview */}
+          {selectedComposite && (
+            <div className="flex items-center gap-3 rounded-xl border border-border/50 p-2 bg-card/50">
+              <img src={selectedComposite.url} alt="Selected" className="w-14 h-20 rounded-lg object-cover border border-border" />
+              <div>
+                <p className="text-xs font-semibold">{selectedComposite.title}</p>
+                <p className="text-[10px] text-muted-foreground">Selected for video</p>
+              </div>
+            </div>
+          )}
+
+          {/* Language */}
+          <div className="flex gap-2">
+            {LANGUAGES.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => setLanguage(l.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  language === l.id ? "gradient-bg text-white" : "border border-border text-muted-foreground hover:border-primary/40"
                 }`}
               >
+                {l.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Script */}
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <Label className="text-xs">What should the presenter say?</Label>
+              <span className={`text-xs font-mono ${script.length > MAX_SCRIPT ? "text-destructive font-bold" : "text-muted-foreground"}`}>
                 {script.length}/{MAX_SCRIPT}
               </span>
             </div>
             <Textarea
               value={script}
               onChange={(e) => setScript(e.target.value.slice(0, MAX_SCRIPT))}
-              placeholder="e.g. Welcome to this stunning 3-bedroom home. Notice the open floor plan, chef's kitchen, and breathtaking garden views."
-              className="min-h-[110px] resize-none text-sm"
+              placeholder="Describe the property highlights or let AI write for you..."
+              className="min-h-[100px] resize-none text-sm"
               maxLength={MAX_SCRIPT}
             />
-            <p className="text-xs text-muted-foreground">
-              Max {MAX_SCRIPT} characters. This will be used to generate a single 8-second video clip.
-            </p>
+            <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
+              {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
+              ✨ AI Write Script
+            </Button>
           </div>
 
-
-
-          <div className="flex justify-between items-center">
-            <Button variant="outline" onClick={() => setStep(1)} className="cursor-pointer">
-              Back
-            </Button>
-            <Button
-              onClick={handleGenerate}
-              disabled={!step3Valid || generating || script.length > MAX_SCRIPT}
-              className="gradient-bg text-white shadow-md cursor-pointer px-8"
-            >
-              {generating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Generate Walkthrough
-                </>
-              )}
+          {/* Actions */}
+          <div className="flex justify-between">
+            <Button variant="outline" onClick={() => setStep(1)} className="cursor-pointer">Back</Button>
+            <Button onClick={handleGenerateVideo} disabled={!step2Valid || generating} className="gradient-bg text-white shadow-md cursor-pointer px-8">
+              {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate Video</>}
             </Button>
           </div>
         </div>
       )}
 
-      {/* ── RESULTS ── */}
+      {/* ══════════════ RESULTS ══════════════ */}
       {showResults && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">
-              {done ? "✅ Your video is ready" : "Generating your walkthrough..."}
+              {videoStatus === "ready" ? "✅ Your property video is ready!" : videoStatus === "error" ? "❌ Generation failed" : "🏠 Creating your property showcase..."}
             </h2>
-            {done && (
-              <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">
-                Start over
-              </Button>
+            {(videoStatus === "ready" || videoStatus === "error") && (
+              <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">Start over</Button>
             )}
           </div>
 
-          <div className="grid gap-4">
-            {videoStatuses.map((status, i) => (
-              <VideoCard
-                key={i}
-                index={i}
-                status={status}
-                video={videos[i]}
-                totalParts={videoStatuses.length}
-              />
-            ))}
-          </div>
+          <VideoCard status={videoStatus} video={videoResult} />
 
-          {done && (
+          {videoStatus === "ready" && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-center">
-              <p className="text-sm font-medium">🎬 Video generated successfully!</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                You can download your cinematic 8-second clip above.
-              </p>
+              <p className="text-sm font-medium">🏠 Property showcase video generated!</p>
+              <p className="text-xs text-muted-foreground mt-1">Auto-saved to your Asset Library.</p>
             </div>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+export default function AIWalkthroughPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-[400px]"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+      <RealEstateVideoContent />
+    </Suspense>
   );
 }

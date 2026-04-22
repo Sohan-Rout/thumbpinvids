@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { mockAvatars, mockVoices } from "@/lib/mock-data";
 
 /**
  * Hook to manage all user assets (avatars, product images, backgrounds, etc.)
@@ -92,13 +91,14 @@ export function useAssets(typeFilter = null) {
 
   return {
     assets,
-    avatars: assets.filter(a => a.type === "avatar").concat(typeFilter === "avatar" || !typeFilter ? mockAvatars : []),
+    avatars: assets.filter(a => a.type === "avatar"),
     customAvatars: assets.filter(a => a.type === "avatar"),
-    libraryAvatars: (typeFilter === "avatar" || !typeFilter) ? mockAvatars : [],
+    libraryAvatars: [],
     productImages: assets.filter(a => a.type === "product" || a.type === "image"),
     backgrounds: assets.filter(a => a.type === "background"),
+    composites: assets.filter(a => a.type === "composite"),
     videos: assets.filter(a => a.type === "video" || a.type === "clip"),
-    voices: mockVoices,
+    voices: [],
     loading,
     uploading,
     uploadAsset,
@@ -116,8 +116,8 @@ export function useAvatarsAndVoices() {
   return {
     avatars,
     customAvatars,
-    libraryAvatars: avatars.filter(a => !a.is_custom),
-    voices: mockVoices,
+    libraryAvatars: [],
+    voices: [],
     loading,
     uploading,
     uploadAvatar: (file, name) => uploadAsset(file, name, "avatar"),
