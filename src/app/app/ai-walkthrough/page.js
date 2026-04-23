@@ -497,7 +497,7 @@ function RealEstateVideoContent() {
               {[
                 { id: "prebuilt", label: "RE Agents", icon: PersonStanding },
                 { id: "upload", label: "Upload", icon: Upload },
-                { id: "generate", label: "AI Generate", icon: Sparkles },
+                { id: "generate", label: "Create Avatar", icon: Sparkles },
               ].map((m) => (
                 <button
                   key={m.id}
