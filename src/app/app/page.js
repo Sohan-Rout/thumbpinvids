@@ -3,168 +3,171 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UpgradeBanner } from "@/components/dashboard/upgrade-banner";
 import { useUser } from "@/hooks/use-user";
 import {
   Wand2,
   Video,
-  Image,
-  CreditCard,
-  Layers,
-  ArrowRight,
   Sparkles,
+  ShoppingBag,
+  ArrowRight,
+  Plus,
 } from "lucide-react";
 
 export default function DashboardPage() {
   const { profile, loading: userLoading } = useUser();
-  const [stats, setStats] = useState(null);
-  const [loadingStats, setLoadingStats] = useState(true);
+  const [videos, setVideos] = useState([]);
+  const [loadingVideos, setLoadingVideos] = useState(true);
 
   useEffect(() => {
-    async function fetchStats() {
+    async function fetchRecentVideos() {
       try {
-        const res = await fetch("/api/user/stats");
+        const res = await fetch("/api/user/videos?limit=3");
         if (res.ok) {
           const data = await res.json();
-          setStats(data.stats);
+          setVideos(data.videos || []);
         }
       } catch (err) {
-        console.error("Failed to fetch stats:", err);
+        console.error("Failed to fetch videos:", err);
       } finally {
-        setLoadingStats(false);
+        setLoadingVideos(false);
       }
     }
-    fetchStats();
+    fetchRecentVideos();
   }, []);
-
-  const loading = userLoading || loadingStats;
 
   const userName = profile?.name || profile?.email?.split("@")[0] || "there";
 
-  const statCards = [
-    {
-      label: "Credits Left",
-      value: loading ? null : (profile?.credits ?? 0),
-      icon: CreditCard,
-      color: "text-indigo-600 bg-indigo-50",
-    },
-    {
-      label: "Total Videos",
-      value: loading ? null : (stats?.totalVideos ?? 0),
-      icon: Video,
-      color: "text-emerald-600 bg-emerald-50",
-    },
-    {
-      label: "Composites",
-      value: loading ? null : (stats?.totalComposites ?? 0),
-      icon: Layers,
-      color: "text-violet-600 bg-violet-50",
-    },
-    {
-      label: "Total Assets",
-      value: loading ? null : (stats?.totalAssets ?? 0),
-      icon: Image,
-      color: "text-amber-600 bg-amber-50",
-    },
-  ];
-
-  const quickActions = [
-    {
-      title: "Text to Video",
-      description: "Generate a UGC video from a script",
-      href: "/app/text-to-video",
-      icon: Video,
-    },
+  const actions = [
     {
       title: "Real Estate",
-      description: "Create property walkthrough videos",
+      description: "Property walkthroughs",
       href: "/app/ai-walkthrough",
       icon: Sparkles,
+      color: "bg-amber-50 text-amber-600",
     },
     {
-      title: "Product Video",
-      description: "Generate product showcase videos",
+      title: "UGC Video",
+      description: "Convert script to video",
+      href: "/app/text-to-video",
+      icon: Video,
+      color: "bg-indigo-50 text-indigo-600",
+    },
+    {
+      title: "Product Ad",
+      description: "Showcase physical items",
       href: "/app/product-to-video",
-      icon: Wand2,
+      icon: ShoppingBag,
+      color: "bg-emerald-50 text-emerald-600",
     },
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold font-heading tracking-tight">
-            Welcome back, {userName} 👋
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Here&apos;s what&apos;s happening with your videos
-          </p>
-        </div>
-        <Link href="/app/text-to-video">
-          <Button className="gradient-bg text-white cursor-pointer shadow-sm h-9 text-sm">
-            <Wand2 className="w-4 h-4 mr-2" />
-            New Video
-          </Button>
-        </Link>
-      </div>
+    <div className="max-w-3xl mx-auto space-y-16">
+      {/* Zen Header */}
+      <section className="text-center space-y-4 pt-4">
+        <h1 className="text-4xl font-bold font-heading tracking-tight sm:text-5xl">
+          Create something <span className="gradient-text italic">remarkable.</span>
+        </h1>
+        <p className="text-base text-muted-foreground max-w-md mx-auto">
+          Welcome back, {userName}. High-converting video generation, simplified for you.
+        </p>
+      </section>
 
-      {/* Upgrade Banner */}
-      <UpgradeBanner />
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((stat, i) => {
-          const Icon = stat.icon;
-          return (
-            <Card key={i} className="border border-border/50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${stat.color}`}>
-                    <Icon className="w-4 h-4" />
-                  </div>
+      {/* Minimalism Actions */}
+      <section className="grid sm:grid-cols-3 gap-6">
+        {actions.map((action) => {
+          const Icon = action.icon;
+          const isComingSoon = action.title === "UGC Video";
+          
+          const content = (
+            <div className={`relative flex flex-col items-center p-6 space-y-4 rounded-2xl border border-transparent transition-all duration-300 ${
+              isComingSoon 
+                ? "opacity-60 grayscale cursor-not-allowed" 
+                : "hover:border-border/40 hover:bg-white hover:shadow-xl hover:shadow-indigo-500/5"
+            }`}>
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${action.color} ${!isComingSoon && "group-hover:scale-110 transition-transform"}`}>
+                <Icon className="w-6 h-6" />
+              </div>
+              <div className="text-center">
+                <h3 className="text-sm font-semibold">{action.title}</h3>
+                <p className="text-[12px] text-muted-foreground mt-1">{action.description}</p>
+              </div>
+              
+              {isComingSoon && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="bg-foreground text-background text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full shadow-lg">
+                    Coming Soon
+                  </span>
                 </div>
-                {stat.value === null ? (
-                  <Skeleton className="h-7 w-12 mb-1" />
-                ) : (
-                  <p className="text-2xl font-semibold tracking-tight">{stat.value}</p>
-                )}
-                <p className="text-xs text-muted-foreground mt-0.5">{stat.label}</p>
-              </CardContent>
-            </Card>
+              )}
+            </div>
+          );
+
+          if (isComingSoon) return <div key={action.href}>{content}</div>;
+
+          return (
+            <Link key={action.href} href={action.href} className="group">
+              {content}
+            </Link>
           );
         })}
-      </div>
+      </section>
 
-      {/* Quick Actions */}
-      <div>
-        <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wider">
-          Quick Actions
-        </h2>
-        <div className="grid sm:grid-cols-3 gap-3">
-          {quickActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Link key={action.href} href={action.href}>
-                <Card className="border border-border/50 hover:border-primary/20 hover:shadow-sm transition-all cursor-pointer group">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-                      <Icon className="w-5 h-5 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{action.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{action.description}</p>
-                    </div>
-                    <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+      {/* Elegant Recents */}
+      <section className="space-y-6">
+        <div className="flex items-center justify-between border-b border-border/30 pb-4">
+          <h2 className="text-lg font-semibold font-heading tracking-tight">Recent Projects</h2>
+          <Link href="/app/history" className="text-[13px] font-medium text-primary hover:underline flex items-center gap-1">
+            View All <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
         </div>
-      </div>
+
+        <div className="space-y-4">
+          {loadingVideos ? (
+            [1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)
+          ) : videos.length > 0 ? (
+            videos.map((video) => (
+              <Link key={video.id} href="/app/history" className="block group">
+                <div className="flex items-center justify-between p-4 rounded-xl hover:bg-white hover:shadow-md transition-all duration-300 border border-transparent hover:border-border/30">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-muted rounded-lg overflow-hidden relative flex-shrink-0">
+                      {video.url ? (
+                        <video src={video.url} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-indigo-50">
+                          <Video className="w-6 h-6 text-indigo-200" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm truncate">{video.name}</p>
+                      <p className="text-[12px] text-muted-foreground">
+                        {new Date(video.createdAt).toLocaleDateString("en-IN", {
+                          day: "numeric",
+                          month: "short",
+                        })} · {video.type}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center text-muted-foreground group-hover:text-primary group-hover:border-primary/30 transition-colors">
+                    <ArrowRight className="w-4 h-4" />
+                  </div>
+                </div>
+              </Link>
+            ))
+          ) : (
+            <div className="text-center py-10 bg-white/40 rounded-3xl border border-dashed border-border/40">
+              <p className="text-sm text-muted-foreground">No projects yet. Let&apos;s start one!</p>
+              <Link href="/app/ai-walkthrough">
+                <Button variant="link" className="mt-2 text-primary font-bold">
+                  <Plus className="w-4 h-4 mr-1" /> Create Now
+                </Button>
+              </Link>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

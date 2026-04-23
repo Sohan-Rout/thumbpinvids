@@ -40,7 +40,6 @@ import {
   Building2,
   X,
 } from "lucide-react";
-import { useHeygen } from "@/hooks/use-heygen";
 import { useRouter } from "next/navigation";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -281,17 +280,14 @@ export default function AssetLibraryPage() {
     productImages,
     composites,
     videos,
-    loading: assetsLoading,
+    loading,
     uploading,
     uploadAsset,
     deleteAsset,
     refetch,
   } = useAssets();
 
-  const { photoAvatars, loading: photoLoading } = useHeygen();
   const router = useRouter();
-
-  const loading = assetsLoading || photoLoading;
 
   const [search, setSearch] = useState("");
   const [selectedAsset, setSelectedAsset] = useState(null);
