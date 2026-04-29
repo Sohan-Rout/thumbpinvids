@@ -226,17 +226,52 @@ export default function HistoryPage() {
       )}
 
       <Dialog open={!!previewVideo} onOpenChange={() => setPreviewVideo(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Video Preview</DialogTitle>
+        <DialogContent className="max-w-3xl p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="p-4 pb-0">
+            <DialogTitle className="text-base font-semibold truncate pr-6">
+              {previewVideo?.name || "Preview"}
+            </DialogTitle>
           </DialogHeader>
-          {previewVideo?.url ? (
-            <div className="w-full rounded-xl overflow-hidden bg-black">
-              <video src={previewVideo.url} controls className="w-full h-full" />
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No preview available.</p>
-          )}
+          <div className="p-4 pt-3">
+            {previewVideo?.url ? (
+              previewVideo.type === "composite" || previewVideo.url.match(/\.(png|jpg|jpeg|webp|gif)(\?|$)/i) ? (
+                <div className="w-full rounded-xl overflow-hidden bg-muted flex items-center justify-center">
+                  <img
+                    src={previewVideo.url}
+                    alt={previewVideo.name}
+                    className="max-h-[70vh] w-auto mx-auto rounded-xl object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-full rounded-xl overflow-hidden bg-black">
+                  <video
+                    src={previewVideo.url}
+                    controls
+                    autoPlay
+                    className="w-full max-h-[70vh] object-contain"
+                  />
+                </div>
+              )
+            ) : (
+              <div className="py-16 text-center text-sm text-muted-foreground">
+                No preview available for this asset.
+              </div>
+            )}
+            {previewVideo?.url && (
+              <div className="flex gap-2 mt-3 justify-end">
+                <a href={previewVideo.url} target="_blank" rel="noopener noreferrer">
+                  <Button variant="outline" size="sm" className="text-xs cursor-pointer gap-1.5">
+                    <ExternalLink className="w-3.5 h-3.5" /> Open
+                  </Button>
+                </a>
+                <a href={previewVideo.url} download={previewVideo.name}>
+                  <Button size="sm" className="text-xs cursor-pointer gap-1.5 gradient-bg text-white">
+                    <Download className="w-3.5 h-3.5" /> Download
+                  </Button>
+                </a>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

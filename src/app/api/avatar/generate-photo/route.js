@@ -26,25 +26,39 @@ export async function POST(request) {
     userId = session.user.id;
 
     const body = await request.json();
-    const { name, age, gender, ethnicity, orientation, pose, style, appearance } = body;
+    const {
+      name, age, gender, ethnicity, orientation, pose, style,
+      appearance,
+      skinTone, hair, dressingStyle, accessories, place, extraNotes,
+    } = body;
 
     if (!name || !age || !gender || !ethnicity || !orientation || !pose || !style || !appearance) {
-      return NextResponse.json({ error: "All fields are required" }, { status: 400 });
+      return NextResponse.json({ error: "appearance, name, age, gender, ethnicity, orientation, pose, and style are required" }, { status: 400 });
     }
 
     const creditResult = await consumeCreditsForAction({
       userId,
       action: "avatar_photo",
-      metadata: {
-        endpoint: "/api/avatar/generate-photo",
-      },
+      metadata: { endpoint: "/api/avatar/generate-photo" },
     });
-
     if (!creditResult.ok) {
       return NextResponse.json(creditResult.payload, { status: creditResult.status });
     }
-
     debit = creditResult.debit;
+
+    // Build an enriched appearance prompt by appending the extra customization fields
+    const enrichments = [
+      skinTone && `Skin tone: ${skinTone}`,
+      hair && `Hair: ${hair}`,
+      dressingStyle && `Dressing style: ${dressingStyle}`,
+      accessories && `Accessories: ${accessories}`,
+      place && `Background / setting: ${place}`,
+      extraNotes && extraNotes,
+    ].filter(Boolean);
+
+    const enrichedAppearance = enrichments.length > 0
+      ? `${appearance.trim()}. ${enrichments.join(". ")}.`
+      : appearance.trim();
 
     const response = await fetch("https://api.heygen.com/v2/photo_avatar/photo/generate", {
       method: "POST",
@@ -53,7 +67,7 @@ export async function POST(request) {
         "content-type": "application/json",
         "x-api-key": apiKey,
       },
-      body: JSON.stringify({ name, age, gender, ethnicity, orientation, pose, style, appearance }),
+      body: JSON.stringify({ name, age, gender, ethnicity, orientation, pose, style, appearance: enrichedAppearance }),
     });
 
     const data = await response.json();

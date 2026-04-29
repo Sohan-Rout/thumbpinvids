@@ -108,10 +108,16 @@ function RealEstateVideoContent() {
     age: "Young Adult",
     gender: "Woman",
     ethnicity: "White",
+    skinTone: "",
+    hair: "",
+    dressingStyle: "",
+    accessories: "",
+    place: "",
     orientation: "square",
     pose: "half_body",
     style: "Realistic",
     appearance: "",
+    extraNotes: "",
   });
   const [photoGenId, setPhotoGenId] = useState(null);
   const [photoGenStatus, setPhotoGenStatus] = useState(null); // null|"generating"|"success"|"failed"
@@ -1058,6 +1064,57 @@ function RealEstateVideoContent() {
                         </Select>
                       </div>
                     </div>
+
+                    {/* Extended customization row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Skin Tone</label>
+                        <Select value={photoForm.skinTone} onValueChange={(v) => setPhotoForm((f) => ({ ...f, skinTone: v }))}>
+                          <SelectTrigger><SelectValue placeholder="Select skin tone" /></SelectTrigger>
+                          <SelectContent>
+                            {["Fair", "Light", "Wheatish", "Medium", "Olive", "Tan", "Dark Brown", "Deep", "Unspecified"].map((s) => (
+                              <SelectItem key={s} value={s}>{s}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Hair (color &amp; style)</label>
+                        <Input
+                          value={photoForm.hair}
+                          onChange={(e) => setPhotoForm((f) => ({ ...f, hair: e.target.value }))}
+                          placeholder="e.g., Long black wavy, Short cropped grey"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Dressing Style</label>
+                        <Select value={photoForm.dressingStyle} onValueChange={(v) => setPhotoForm((f) => ({ ...f, dressingStyle: v }))}>
+                          <SelectTrigger><SelectValue placeholder="Select style" /></SelectTrigger>
+                          <SelectContent>
+                            {["Casual", "Smart Casual", "Business Formal", "Business Casual", "Traditional / Ethnic", "Luxury", "Sporty", "Street Style", "Unspecified"].map((d) => (
+                              <SelectItem key={d} value={d}>{d}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Accessories</label>
+                        <Input
+                          value={photoForm.accessories}
+                          onChange={(e) => setPhotoForm((f) => ({ ...f, accessories: e.target.value }))}
+                          placeholder="e.g., Gold earrings, watch, glasses"
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-xs font-medium text-muted-foreground">Place / Background Setting</label>
+                        <Input
+                          value={photoForm.place}
+                          onChange={(e) => setPhotoForm((f) => ({ ...f, place: e.target.value }))}
+                          placeholder="e.g., Modern real estate office, luxury apartment lobby"
+                        />
+                      </div>
+                    </div>
+
                     {/* Appearance */}
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted-foreground">Appearance Description</label>
@@ -1069,6 +1126,16 @@ function RealEstateVideoContent() {
                         maxLength={1000}
                       />
                       <p className="text-[10px] text-muted-foreground text-right">{photoForm.appearance.length}/1000</p>
+                    </div>
+
+                    {/* Extra notes */}
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Extra Notes (expression, mood, makeup)</label>
+                      <Input
+                        value={photoForm.extraNotes}
+                        onChange={(e) => setPhotoForm((f) => ({ ...f, extraNotes: e.target.value }))}
+                        placeholder="e.g., Warm confident smile, minimal makeup, approachable"
+                      />
                     </div>
 
                     {photoGenStatus === "failed" && (
@@ -1331,14 +1398,17 @@ function RealEstateVideoContent() {
                           setSelectedLookKey(photoImageKey);
                           setSelectedAvatarId(photoAvatarId);
                         }}
-                        className={`rounded-lg border-2 overflow-hidden aspect-square transition-all ${selectedLookKey === photoImageKey ? "border-primary ring-2 ring-primary/40" : "border-border hover:border-primary/50"}`}
+                        className={`relative rounded-lg border-2 overflow-hidden aspect-square transition-all ${selectedLookKey === photoImageKey ? "border-primary ring-2 ring-primary/40" : "border-border hover:border-primary/50"}`}
                       >
                         {photoImageUrl && <img src={photoImageUrl} alt="Base avatar" className="w-full h-full object-cover" />}
                         {selectedLookKey === photoImageKey && (
-                          <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="absolute inset-0 bg-primary/10 flex items-center justify-center">
                             <CheckCircle2 className="w-6 h-6 text-primary drop-shadow" />
                           </div>
                         )}
+                        <div className="absolute bottom-0 inset-x-0 bg-black/60 py-0.5">
+                          <p className="text-[9px] text-white text-center">Base</p>
+                        </div>
                       </button>
 
                       {/* Additional looks */}
@@ -1837,6 +1907,18 @@ function RealEstateVideoContent() {
                   {videoStatus || "processing"}
                 </Badge>
               </div>
+
+              {/* Background generation notice */}
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-start gap-2">
+                <span className="text-base">🎬</span>
+                <div>
+                  <p className="text-xs font-semibold text-primary mb-0.5">Generation running in the background</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    You can freely browse other features — the video will be ready when you return to this page. Your progress is saved automatically.
+                  </p>
+                </div>
+              </div>
+
               <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">Video ID:</span> {videoId}
                 {polling && <span className="ml-3 text-[11px] animate-pulse">Checking every 5 seconds...</span>}

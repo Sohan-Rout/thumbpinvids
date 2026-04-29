@@ -1451,6 +1451,19 @@ function ProductToVideoContent() {
             )}
           </div>
 
+          {/* Background generation notice — shown while still rendering */}
+          {!done && (
+            <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-start gap-2">
+              <span className="text-base">🎬</span>
+              <div>
+                <p className="text-xs font-semibold text-primary mb-0.5">Generation running in the background</p>
+                <p className="text-[11px] text-muted-foreground">
+                  You can freely browse other features — your video(s) will be ready when you return to this page. Your progress is saved automatically.
+                </p>
+              </div>
+            </div>
+          )}
+
           {activeComposites.map((comp, i) => (
             <VideoCard
               key={i}

@@ -45,6 +45,18 @@ const LANGUAGES = [
   { id: "hinglish", label: "Hinglish" },
 ];
 
+const TONES = [
+  { id: "professional", label: "Professional" },
+  { id: "luxury", label: "Luxury" },
+  { id: "casual", label: "Casual" },
+  { id: "energetic", label: "Energetic" },
+  { id: "storytelling", label: "Storytelling" },
+  { id: "urgent", label: "Urgent" },
+  { id: "aspirational", label: "Aspirational" },
+];
+
+const STORAGE_KEY = "re_walkthrough_state";
+
 async function compressImage(file, maxDimension = 1200, quality = 0.7) {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -200,6 +212,7 @@ function RealEstateVideoContent() {
   const [avatarVariantCount, setAvatarVariantCount] = useState(1);
   const [generatedAvatars, setGeneratedAvatars] = useState([]);
   const [generatingAvatar, setGeneratingAvatar] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState(null); // avatar expand lightbox
 
   // Step 1: Composites
   const [composites, setComposites] = useState([]);
@@ -210,14 +223,44 @@ function RealEstateVideoContent() {
   // Step 2: Script + Generate (voice is backend-only)
   const [script, setScript] = useState("");
   const [language, setLanguage] = useState("english");
+  const [scriptTone, setScriptTone] = useState("professional");
+  const [allowEmotionTags, setAllowEmotionTags] = useState(true);
+  const [propertyBrief, setPropertyBrief] = useState({
+    location: "", propertyType: "", price: "",
+    bedrooms: "", bathrooms: "", area: "",
+    keyFeatures: "", amenities: "",
+  });
   const [generatingScript, setGeneratingScript] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [videoStatus, setVideoStatus] = useState("idle");
   const [videoResult, setVideoResult] = useState(null);
 
+  // ── Restore state from localStorage ──────────────────────────────────────
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s.step !== undefined) setStep(s.step);
+        if (s.language) setLanguage(s.language);
+        if (s.scriptTone) setScriptTone(s.scriptTone);
+        if (typeof s.allowEmotionTags === "boolean") setAllowEmotionTags(s.allowEmotionTags);
+        if (s.propertyBrief) setPropertyBrief(s.propertyBrief);
+        if (s.script) setScript(s.script);
+        if (s.avatarMode) setAvatarMode(s.avatarMode);
+      }
+    } catch {}
     if (initialScript) { setScript(initialScript); setStep(2); }
   }, [initialScript]);
+
+  // ── Persist state to localStorage on change ───────────────────────────────
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode,
+      }));
+    } catch {}
+  }, [step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode]);
 
   const selectedComposite = selectedCompositeIndex !== null ? composites[selectedCompositeIndex] : null;
 
@@ -338,7 +381,9 @@ function RealEstateVideoContent() {
       const propIdx = selectedComposite.propertyIndex ?? 0;
       if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
       fd.append("language", language);
-      fd.append("tone", "professional");
+      fd.append("tone", scriptTone);
+      fd.append("allowEmotionTags", String(allowEmotionTags));
+      fd.append("propertyBrief", JSON.stringify(propertyBrief));
 
       const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
       const data = await res.json();
@@ -420,6 +465,7 @@ function RealEstateVideoContent() {
     setVideoResult(null);
     setGenerating(false);
     setStep(0);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }
 
   const showResults = videoStatus !== "idle";
@@ -515,23 +561,35 @@ function RealEstateVideoContent() {
             {avatarMode === "prebuilt" && (
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
                 {RE_AVATARS.map((av) => (
-                  <button
+                  <div
                     key={av.id}
-                    onClick={() => setSelectedAvatar({ url: av.url, file: null, name: av.name })}
-                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all cursor-pointer group ${
+                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all group ${
                       selectedAvatar?.url === av.url ? "border-primary ring-2 ring-primary/30 scale-105" : "border-border/50 hover:border-primary/50"
                     }`}
                   >
-                    <img src={av.url} alt={av.name} className="w-full h-full object-cover" />
+                    <img
+                      src={av.url}
+                      alt={av.name}
+                      className="w-full h-full object-cover cursor-pointer"
+                      onClick={() => setSelectedAvatar({ url: av.url, file: null, name: av.name })}
+                    />
+                    {/* Expand button */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setLightboxUrl(av.url); }}
+                      className="absolute top-1 right-1 w-5 h-5 bg-black/60 rounded-full items-center justify-center hidden group-hover:flex transition-all cursor-pointer"
+                      title="Expand"
+                    >
+                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                    </button>
                     {selectedAvatar?.url === av.url && (
-                      <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                      <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
                         <CheckCircle2 className="w-3 h-3 text-white" />
                       </div>
                     )}
                     <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-sm px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <p className="text-[10px] text-white text-center truncate">{av.name}</p>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -646,11 +704,84 @@ function RealEstateVideoContent() {
             )}
           </div>
 
+          {/* ── Property Brief (moved here from Step 2) ── */}
+          <div className="rounded-xl border border-border/50 p-4 bg-card/50 space-y-3">
+            <h3 className="text-sm font-semibold">Property Details <span className="text-muted-foreground font-normal text-xs">(helps AI write a better script)</span></h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Location (e.g., Gurgaon Sector 49)"
+                value={propertyBrief.location}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, location: e.target.value }))}
+              />
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Property type (e.g., 3BHK apartment)"
+                value={propertyBrief.propertyType}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, propertyType: e.target.value }))}
+              />
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Price (e.g., ₹1.2 Cr)"
+                value={propertyBrief.price}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, price: e.target.value }))}
+              />
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Bedrooms"
+                value={propertyBrief.bedrooms}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, bedrooms: e.target.value }))}
+              />
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Bathrooms"
+                value={propertyBrief.bathrooms}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, bathrooms: e.target.value }))}
+              />
+              <input
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Area / size (e.g., 1650 sq ft)"
+                value={propertyBrief.area}
+                onChange={(e) => setPropertyBrief((p) => ({ ...p, area: e.target.value }))}
+              />
+            </div>
+            <Textarea
+              placeholder="Key features (e.g., floor-to-ceiling windows, park view, modular kitchen)"
+              className="min-h-16 resize-none text-sm"
+              value={propertyBrief.keyFeatures}
+              onChange={(e) => setPropertyBrief((p) => ({ ...p, keyFeatures: e.target.value }))}
+            />
+            <Textarea
+              placeholder="Amenities (e.g., gym, pool, clubhouse, parking)"
+              className="min-h-16 resize-none text-sm"
+              value={propertyBrief.amenities}
+              onChange={(e) => setPropertyBrief((p) => ({ ...p, amenities: e.target.value }))}
+            />
+          </div>
+
           {/* Next */}
           <div className="flex justify-end">
             <Button onClick={() => { setStep(1); handleGenerateComposites(); }} disabled={!step0Valid} className="gradient-bg text-white shadow-md cursor-pointer px-6">
               Create Composites <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div className="relative max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <img src={lightboxUrl} alt="Avatar preview" className="w-full rounded-2xl shadow-2xl border border-white/10" />
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute top-3 right-3 w-8 h-8 bg-black/60 rounded-full flex items-center justify-center text-white hover:bg-black/80 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
@@ -744,7 +875,7 @@ function RealEstateVideoContent() {
           )}
 
           {/* Language */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {LANGUAGES.map((l) => (
               <button
                 key={l.id}
@@ -756,6 +887,39 @@ function RealEstateVideoContent() {
                 {l.label}
               </button>
             ))}
+          </div>
+
+          {/* Tone */}
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Script Tone</Label>
+            <div className="flex gap-2 flex-wrap">
+              {TONES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setScriptTone(t.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                    scriptTone === t.id ? "gradient-bg text-white" : "border border-border text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Emotion tags toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setAllowEmotionTags((v) => !v)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                allowEmotionTags ? "bg-primary" : "bg-muted-foreground/30"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                allowEmotionTags ? "translate-x-4" : "translate-x-0.5"
+              }`} />
+            </button>
+            <span className="text-xs text-muted-foreground">Allow emotion tags like <code className="text-primary bg-primary/10 px-1 rounded">{{happy}}</code> or <code className="text-primary bg-primary/10 px-1 rounded">{{sad}}</code> in script</span>
           </div>
 
           {/* Script */}
@@ -800,6 +964,19 @@ function RealEstateVideoContent() {
               <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">Start over</Button>
             )}
           </div>
+
+          {/* Background generation notice */}
+          {videoStatus === "generating" && (
+            <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-start gap-2">
+              <span className="text-base">🎬</span>
+              <div>
+                <p className="text-xs font-semibold text-primary mb-0.5">Generation running in the background</p>
+                <p className="text-[11px] text-muted-foreground">
+                  You can freely browse other features — your video will be ready when you return. Progress is saved automatically.
+                </p>
+              </div>
+            </div>
+          )}
 
           <VideoCard status={videoStatus} video={videoResult} />
 
