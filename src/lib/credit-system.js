@@ -14,6 +14,7 @@ export const CREDIT_ACTIONS = {
   ai_walkthrough: { cost: 2, freeBucket: "video", label: "AI Walkthrough" },
   product_video: { cost: 1, freeBucket: "video", label: "Product Video" },
   real_estate_video: { cost: 3, freeBucket: "video", label: "Real Estate Persona Video" },
+  real_estate_video_batch: { cost: 3, freeBucket: "video", label: "Real Estate Batch Video", isBatch: true },
 
   avatar_photo: { cost: 1, freeBucket: "avatar", label: "AI Photo Avatar" },
   avatar_looks: { cost: 1, freeBucket: "avatar", label: "Avatar Look Generation" },
@@ -25,6 +26,21 @@ export const CREDIT_ACTIONS = {
   avatar_group_training: { cost: 25, freeBucket: null, label: "Custom Avatar Training" },
   digital_twin_training: { cost: 25, freeBucket: null, label: "Digital Twin Training" },
 };
+
+/**
+ * Calculate discounted batch cost for real estate video.
+ * Single: 3 credits each (no discount)
+ * 2 videos: ~15% off → 2.5 credits each → total 5
+ * 3 videos: ~25% off → 2.25 credits each → total ~7 (rounded to 7)
+ */
+export function getBatchCost(action, batchSize = 1) {
+  const config = CREDIT_ACTIONS[action];
+  if (!config) return 0;
+  const baseCost = config.cost;
+  if (batchSize <= 1) return baseCost;
+  if (batchSize === 2) return Math.round(baseCost * 2 * 0.85); // ~15% off total
+  return Math.round(baseCost * batchSize * 0.75); // ~25% off total for 3+
+}
 
 function getFreeBucketField(bucket) {
   if (bucket === "video") return "freeVideoGenerationsUsed";

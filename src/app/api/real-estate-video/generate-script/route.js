@@ -59,15 +59,32 @@ export async function POST(request) {
       ? "You may insert emotion tags like {{happy}}, {{sad}}, {{excited}}, {{calm}} inline before the phrase they affect. Keep tags exactly as written."
       : "Do NOT include any emotion tags or special markup.";
 
+    // Also try to read propertyBrief as JSON (sent by updated frontend)
+    let propertyBriefJson = null;
+    try {
+      const rawBrief = formData.get("propertyBrief");
+      if (rawBrief) propertyBriefJson = JSON.parse(rawBrief);
+    } catch {}
+
+    // Merge JSON brief fields with individual form fields
+    if (propertyBriefJson) {
+      if (!location && propertyBriefJson.location) {
+        // Override from JSON brief
+      }
+    }
+
     const briefLines = [
-      location && `Location: ${location}`,
-      propertyType && `Property type: ${propertyType}`,
-      price && `Price: ${price}`,
-      bedrooms && `Bedrooms: ${bedrooms}`,
-      bathrooms && `Bathrooms: ${bathrooms}`,
-      area && `Area/size: ${area}`,
-      keyFeatures && `Key features: ${keyFeatures}`,
-      amenities && `Amenities: ${amenities}`,
+      (propertyBriefJson?.location || location) && `Location: ${propertyBriefJson?.location || location}`,
+      (propertyBriefJson?.propertyType || propertyType) && `Property type: ${propertyBriefJson?.propertyType || propertyType}`,
+      (propertyBriefJson?.price || price) && `Price: ${propertyBriefJson?.price || price}`,
+      (propertyBriefJson?.bedrooms || bedrooms) && `Bedrooms: ${propertyBriefJson?.bedrooms || bedrooms}`,
+      (propertyBriefJson?.bathrooms || bathrooms) && `Bathrooms: ${propertyBriefJson?.bathrooms || bathrooms}`,
+      (propertyBriefJson?.area || area) && `Area/size: ${propertyBriefJson?.area || area}`,
+      (propertyBriefJson?.keyFeatures || keyFeatures) && `Key features: ${propertyBriefJson?.keyFeatures || keyFeatures}`,
+      (propertyBriefJson?.amenities || amenities) && `Amenities: ${propertyBriefJson?.amenities || amenities}`,
+      propertyBriefJson?.furnishing && `Furnishing: ${propertyBriefJson.furnishing}`,
+      propertyBriefJson?.facing && `Facing: ${propertyBriefJson.facing}`,
+      propertyBriefJson?.floor && `Floor: ${propertyBriefJson.floor}`,
     ].filter(Boolean);
     const briefBlock = briefLines.length ? `\n\nPROPERTY BRIEF:\n${briefLines.join("\n")}` : "";
 
@@ -120,10 +137,18 @@ Return ONLY the script text, nothing else.`;
 
 You are given ${compositeDataArr.length} different composite images — each shows the SAME person presenting DIFFERENT properties/rooms/spaces. You also have the original property images.
 
-Write a SEPARATE 8-second spoken script for EACH property. Each script should:
+IMPORTANT — CONTINUATION NARRATIVE (this is a WALKTHROUGH, not separate videos):
+Write scripts that form a CONTINUOUS NARRATIVE WALKTHROUGH — as if the presenter is walking through different rooms/spaces of ONE property tour. The scripts should FLOW naturally from one to the next.
+
+Script structure:
+- Script 1 (OPENING): Powerful scroll-stopping hook + introduce the first room/space. End with a natural transition cue like "And wait till you see what's next..." or "But this isn't even the best part..."
+- Script 2 (MIDDLE — if applicable): Natural continuation — "Now THIS is where it gets interesting..." or "Coming through to the..." Reference the previous space briefly, then highlight this new space. End with anticipation.
+- Script ${compositeDataArr.length} (CLOSING): Final reveal + aspirational closing CTA. Reference the journey ("After seeing all of this...") and end with "Would you live here?", "DM for details", or similar.
+
+Each script must:
 1. Reference what's visible in THAT specific space (room size, view, lighting, features)
-2. Have a UNIQUE hook that matches that property's vibe
-3. Work as a standalone video but also feel cohesive as a series
+2. Flow NATURALLY from the previous script — they should feel like ONE continuous narration
+3. Be exactly 25-30 words (8 seconds of speech each)
 
 Return your response as valid JSON ONLY — an array of strings:
 ["script for property 1", "script for property 2", ...]`;

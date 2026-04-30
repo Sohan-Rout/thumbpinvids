@@ -50,33 +50,46 @@ export async function POST(request) {
       ? direction
       : `The person is standing confidently near the center of the room/space, turned slightly toward the camera with a warm professional smile. One hand is gesturing toward the space around them as if presenting the property. They look like a confident real estate agent inviting you to take a look.`;
 
-    const compositePrompt = `Create a photorealistic image combining these two references into one scene. This should look like a frame from a high-quality real estate spokesperson video.
+    const compositePrompt = `You are given two reference images. Your task is to seamlessly PLACE the PERSON into the PROPERTY scene as if they were PHOTOGRAPHED there.
 
-PERSON (Reference 1): Use this person's EXACT appearance — face, skin tone, hair, body type, clothing. They are a real estate presenter/agent. Do NOT change anything about how they look.
+PERSON (Reference 1 — the human):
+- Reproduce this person's EXACT appearance: face, skin tone, hair color/style, body type, clothing, accessories.
+- Do NOT alter, beautify, age, or stylize them in any way.
 
-PROPERTY (Reference 2): Use this EXACT property/room as the BACKGROUND SETTING. The person should be STANDING INSIDE this space — it's the actual location they are presenting.
+PROPERTY IMAGE PRESERVATION (ABSOLUTE — HIGHEST PRIORITY):
+- The property/location image (Reference 2) MUST remain 100% UNCHANGED.
+- Do NOT modify ANY element: walls, furniture, flooring, lighting, windows, decorations, ceiling, fixtures, shadows, reflections.
+- Do NOT change the camera angle, lens perspective, field of view, focal length, or crop.
+- Do NOT add or remove ANY objects from the scene (no extra furniture, no extra lighting, no new shadows on walls).
+- Do NOT alter the color grading, white balance, exposure, or contrast of the background.
+- The ONLY addition to the scene is the person — everything else must be pixel-level identical to the original property image.
 
-CRITICAL PROPERTY GUARDRAILS:
-- The property image must remain EXACTLY the same: same layout, furniture, wall colors, lighting, windows, floor, decor.
-- Do NOT add, remove, move, or modify ANY property elements.
-- Do NOT change the camera angle, lens perspective, or crop of the property image.
-- The ONLY change allowed is placing the person in the scene with realistic occlusion and shadows.
+GROUND PLACEMENT (CRITICAL — READ CAREFULLY):
+- Analyze the property image to locate the GROUND PLANE (floor surface, pavement, grass, tiles, etc.).
+- The person's FEET must be planted ON this ground surface — never floating above it, never clipping through it.
+- PERSPECTIVE SCALE: The person's size must match the spatial depth of where they stand:
+  • If the ground/floor is CLOSE to the camera → the person appears LARGER (foreground presence).
+  • If the ground/floor is FAR from the camera → the person appears SMALL (matching the distance).
+  • Use surrounding objects (furniture, doors, windows) as scale references — a person standing next to a door should be door-height (~6-7 feet).
+- Match the VANISHING POINT and camera perspective — the person's vertical axis must align with the scene's perspective lines.
+- The person should be standing at a NATURAL position in the space — not blocking the main focal point, ideally off-center or at a 1/3 composition point.
 
 SCENE DIRECTION:
 ${sceneDirection}
 
-SCENE REQUIREMENTS:
-- The person is standing INSIDE the property — they are physically present in this room/space
-- Professional real estate presenter body language — confident posture, warm smile, inviting gestures
-- The property/room is clearly visible around and behind the person — they are showcasing this space
-- Natural lighting that matches the property scene (sunlight from windows, ambient room light)
-- Portrait orientation (9:16 aspect ratio) — framed like a vertical video
-- Authentic skin textures, professional attire, no airbrushing
-- The person takes up about 40-50% of the frame — the property is equally important
-- Natural depth of field — person sharp, distant background elements slightly softer
-- Warm, aspirational color grading — the property should look inviting and premium
+COMPOSITING REALISM:
+- Lighting on the person must match the scene's light sources (window light direction, ambient room light, outdoor sun angle).
+- Add a NATURAL shadow under/behind the person that matches the scene's existing shadow direction and softness.
+- If foreground objects exist (furniture, railings, plants), the person should be OCCLUDED by them where spatially correct.
+- Color temperature and white balance of the person must match the scene (warm indoor = warm skin tones, cool outdoor = cooler tones).
+- The person should have the same slight depth-of-field blur as objects at the same distance in the original image.
 
-Style: This should look EXACTLY like a screenshot from a professional real estate walthrough video — a confident spokesperson presenting a beautiful property. Premium quality, aspirational, cinematic but approachable. NOT a catalog photo, NOT a headshot.`;
+OUTPUT:
+- Portrait orientation (9:16 aspect ratio)
+- The person takes up approximately 30-50% of the frame height depending on their distance from camera
+- The result must look like the person was ACTUALLY photographed at this location — indistinguishable from a real photograph
+- Professional real estate presenter body language — confident posture, warm smile
+- Premium quality, photorealistic, no AI artifacts, no uncanny valley effects`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-image-preview",

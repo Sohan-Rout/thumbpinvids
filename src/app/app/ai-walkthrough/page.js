@@ -28,8 +28,12 @@ import {
   MapPin,
   Building2,
   Save,
+  Film,
+  Merge,
 } from "lucide-react";
 import { AssetSelector } from "@/components/dashboard/asset-selector";
+import { combineVideos, uploadCombinedVideo } from "@/lib/video-combiner";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 
 const MAX_SCRIPT = 200;
 
@@ -54,6 +58,48 @@ const TONES = [
   { id: "urgent", label: "Urgent" },
   { id: "aspirational", label: "Aspirational" },
 ];
+
+// ─── Interactive Questionnaire Presets ────────────────────────────────────────
+const PROPERTY_TYPES = [
+  "1 BHK Apartment", "2 BHK Apartment", "3 BHK Apartment", "4 BHK Apartment",
+  "Villa", "Penthouse", "Studio", "Independent House", "Plot",
+  "Farmhouse", "Commercial Space", "Row House", "Duplex",
+];
+
+const PRICE_RANGES = [
+  { id: "30-50L", label: "₹30-50L" },
+  { id: "50L-1Cr", label: "₹50L-1Cr" },
+  { id: "1-2Cr", label: "₹1-2Cr" },
+  { id: "2-5Cr", label: "₹2-5Cr" },
+  { id: "5Cr+", label: "₹5Cr+" },
+  { id: "custom", label: "Custom" },
+];
+
+const KEY_FEATURES = [
+  "Modular Kitchen", "Floor-to-Ceiling Windows", "Park View", "Balcony",
+  "Smart Home", "Italian Marble", "Walk-in Closet", "Home Office",
+  "Servant Room", "Pooja Room", "City View", "Open Kitchen",
+  "French Windows", "Wooden Flooring", "Designer Bathroom",
+];
+
+const AMENITIES = [
+  { id: "pool", label: "Pool", emoji: "🏊" },
+  { id: "gym", label: "Gym", emoji: "🏋️" },
+  { id: "clubhouse", label: "Clubhouse", emoji: "🎾" },
+  { id: "parking", label: "Parking", emoji: "🅿️" },
+  { id: "garden", label: "Garden", emoji: "🌳" },
+  { id: "security", label: "24/7 Security", emoji: "🛡️" },
+  { id: "jogging", label: "Jogging Track", emoji: "🏃" },
+  { id: "playground", label: "Kids Play Area", emoji: "🎪" },
+  { id: "power", label: "Power Backup", emoji: "⚡" },
+  { id: "lift", label: "Lift", emoji: "🛗" },
+  { id: "intercom", label: "Intercom", emoji: "📞" },
+  { id: "cctv", label: "CCTV", emoji: "📷" },
+];
+
+const FURNISHING_OPTIONS = ["Unfurnished", "Semi-Furnished", "Fully Furnished"];
+const FACING_OPTIONS = ["North", "South", "East", "West", "NE", "NW", "SE", "SW"];
+const FLOOR_OPTIONS = ["Ground", "1-5", "6-10", "11-20", "20+", "Top Floor", "Duplex"];
 
 const STORAGE_KEY = "re_walkthrough_state";
 
@@ -213,27 +259,38 @@ function RealEstateVideoContent() {
   const [generatedAvatars, setGeneratedAvatars] = useState([]);
   const [generatingAvatar, setGeneratingAvatar] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState(null); // avatar expand lightbox
+  const [propertyDrawerOpen, setPropertyDrawerOpen] = useState(false);
 
-  // Step 1: Composites
+  // Step 1: Composites (multi-select)
   const [composites, setComposites] = useState([]);
   const [generatingComposites, setGeneratingComposites] = useState(false);
-  const [selectedCompositeIndex, setSelectedCompositeIndex] = useState(null);
+  const [selectedCompositeIndices, setSelectedCompositeIndices] = useState(new Set());
   const [savingComposites, setSavingComposites] = useState(false);
+
+  // Property brief (interactive questionnaire — moved to step 0)
+  const [propertyBrief, setPropertyBrief] = useState({
+    location: "", propertyType: "", price: "", priceRange: "",
+    bedrooms: 2, bathrooms: 2, area: "",
+    selectedFeatures: [], selectedAmenities: [],
+    furnishing: "", facing: "", floor: "",
+    keyFeatures: "", amenities: "",
+  });
 
   // Step 2: Script + Generate (voice is backend-only)
   const [script, setScript] = useState("");
+  const [batchScripts, setBatchScripts] = useState([]);
   const [language, setLanguage] = useState("english");
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
-  const [propertyBrief, setPropertyBrief] = useState({
-    location: "", propertyType: "", price: "",
-    bedrooms: "", bathrooms: "", area: "",
-    keyFeatures: "", amenities: "",
-  });
   const [generatingScript, setGeneratingScript] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [videoStatus, setVideoStatus] = useState("idle");
-  const [videoResult, setVideoResult] = useState(null);
+  const [videoStatuses, setVideoStatuses] = useState([]);
+  const [videoResults, setVideoResults] = useState([]);
+
+  // Combine state
+  const [combining, setCombining] = useState(false);
+  const [combineProgress, setCombineProgress] = useState("");
+  const [combinedVideo, setCombinedVideo] = useState(null); // { blobUrl, serverUrl }
 
   // ── Restore state from localStorage ──────────────────────────────────────
   useEffect(() => {
@@ -262,12 +319,34 @@ function RealEstateVideoContent() {
     } catch {}
   }, [step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode]);
 
-  const selectedComposite = selectedCompositeIndex !== null ? composites[selectedCompositeIndex] : null;
+  const selectedCompositeArray = [...selectedCompositeIndices].sort().map((i) => composites[i]).filter(Boolean);
+  const isBatchMode = selectedCompositeIndices.size > 1;
+
+  // Toggle composite selection
+  function toggleComposite(i) {
+    setSelectedCompositeIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+  function selectAllComposites() {
+    if (selectedCompositeIndices.size === composites.length) setSelectedCompositeIndices(new Set());
+    else setSelectedCompositeIndices(new Set(composites.map((_, i) => i)));
+  }
+
+  // Batch credit calculation
+  const batchSize = selectedCompositeIndices.size;
+  const perVideoCost = 3;
+  const totalFullPrice = batchSize * perVideoCost;
+  const discountedTotal = batchSize <= 1 ? perVideoCost : batchSize === 2 ? 5 : Math.round(batchSize * perVideoCost * 0.75);
+  const savings = totalFullPrice - discountedTotal;
 
   // Validity
   const step0Valid = propertyImages.length >= 1 && !!selectedAvatar;
-  const step1Valid = selectedCompositeIndex !== null;
-  const step2Valid = script.trim().length >= 15;
+  const step1Valid = selectedCompositeIndices.size >= 1;
+  const step2Valid = isBatchMode ? batchScripts.length === batchSize && batchScripts.every((s) => s.trim().length >= 15) : script.trim().length >= 15;
 
   // ── Avatar generation ──────────────────────────────────────────────────────
   async function handleGenerateAvatars() {
@@ -296,7 +375,8 @@ function RealEstateVideoContent() {
     if (!selectedAvatar || propertyImages.length === 0) return;
     setGeneratingComposites(true);
     setComposites([]);
-    setSelectedCompositeIndex(null);
+    setSelectedCompositeIndices(new Set());
+    setBatchScripts([]);
     try {
       let avatarFile;
       if (selectedAvatar.file) {
@@ -328,8 +408,8 @@ function RealEstateVideoContent() {
       }
 
       setComposites(results);
-      toast.success(`${results.length} composite(s) ready — pick your best!`, { id: "composite-progress" });
-      if (results.length === 1) setSelectedCompositeIndex(0);
+      toast.success(`${results.length} composite(s) ready — select your favorites!`, { id: "composite-progress" });
+      if (results.length === 1) setSelectedCompositeIndices(new Set([0]));
     } catch (err) {
       toast.error("Composite generation failed", { description: err.message });
     } finally {
@@ -338,13 +418,14 @@ function RealEstateVideoContent() {
   }
 
   // ── Save unused composites to Asset Library ────────────────────────────────
-  async function saveUnusedComposites(selected) {
-    if (composites.length <= 1) return;
+  async function saveUnusedComposites() {
+    const unselected = composites.filter((_, i) => !selectedCompositeIndices.has(i));
+    if (unselected.length === 0) return;
     setSavingComposites(true);
     try {
       const payload = {
         composites: composites.map((c) => ({ dataUrl: c.url, name: c.title })),
-        selectedIndex: selected,
+        selectedIndex: [...selectedCompositeIndices][0] ?? 0,
       };
       const res = await fetch("/api/real-estate-video/save-composites", {
         method: "POST",
@@ -353,9 +434,7 @@ function RealEstateVideoContent() {
       });
       const data = await res.json();
       if (res.ok && data.saved?.length > 0) {
-        toast.success(`${data.saved.length} composite(s) saved to Asset Library`, {
-          description: "Animate them anytime from the Asset Library!",
-        });
+        toast.success(`${data.saved.length} composite(s) saved to Asset Library`);
       }
     } catch (err) {
       console.error("Failed to save composites:", err);
@@ -366,30 +445,50 @@ function RealEstateVideoContent() {
 
   // ── Proceed from composite pick → script ───────────────────────────────────
   async function handleCompositeNext() {
-    if (selectedCompositeIndex === null) return;
-    saveUnusedComposites(selectedCompositeIndex); // background
+    if (selectedCompositeIndices.size === 0) return;
+    saveUnusedComposites(); // background
     setStep(2);
   }
 
-  // ── Script generation ──────────────────────────────────────────────────────
+  // ── Script generation (single + batch) ─────────────────────────────────────
   async function handleGenerateScript() {
-    if (!selectedComposite) return;
+    if (selectedCompositeArray.length === 0) return;
     setGeneratingScript(true);
     try {
       const fd = new FormData();
-      fd.append("compositeImage", selectedComposite.file);
-      const propIdx = selectedComposite.propertyIndex ?? 0;
-      if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
+      // Build brief with combined features/amenities
+      const enrichedBrief = {
+        ...propertyBrief,
+        keyFeatures: [...(propertyBrief.selectedFeatures || []), propertyBrief.keyFeatures].filter(Boolean).join(", "),
+        amenities: [...(propertyBrief.selectedAmenities || []).map((id) => AMENITIES.find((a) => a.id === id)?.label).filter(Boolean), propertyBrief.amenities].filter(Boolean).join(", "),
+      };
+      fd.append("propertyBrief", JSON.stringify(enrichedBrief));
       fd.append("language", language);
       fd.append("tone", scriptTone);
       fd.append("allowEmotionTags", String(allowEmotionTags));
-      fd.append("propertyBrief", JSON.stringify(propertyBrief));
 
-      const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Script generation failed");
-      setScript(data.script);
-      toast.success("Script generated!");
+      if (isBatchMode) {
+        fd.append("compositeCount", String(selectedCompositeArray.length));
+        for (let i = 0; i < selectedCompositeArray.length; i++) {
+          fd.append(`compositeImage_${i}`, selectedCompositeArray[i].file);
+          const propIdx = selectedCompositeArray[i].propertyIndex ?? 0;
+          if (propertyImages[propIdx]) fd.append(`propertyImage_${i}`, await compressImage(propertyImages[propIdx]));
+        }
+        const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Script generation failed");
+        setBatchScripts(data.scripts || []);
+        toast.success(`${data.scripts?.length || 0} continuation scripts generated!`);
+      } else {
+        fd.append("compositeImage", selectedCompositeArray[0].file);
+        const propIdx = selectedCompositeArray[0].propertyIndex ?? 0;
+        if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
+        const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Script generation failed");
+        setScript(data.script);
+        toast.success("Script generated!");
+      }
     } catch (err) {
       toast.error("Script generation failed", { description: err.message });
     } finally {
@@ -397,59 +496,104 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Video generation (script → backend handles voice → Veo 3.1) ───────────
+  // ── Single video generation via SSE ────────────────────────────────────────
+  async function generateSingleVideo(composite, scriptText, videoIndex) {
+    const fd = new FormData();
+    fd.append("compositeImage", composite.file);
+    fd.append("script", scriptText.trim());
+
+    const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || "Generation failed");
+    }
+    if (!response.body) throw new Error("No response stream");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "progress") toast.info(event.message, { id: `video-gen-${videoIndex}` });
+          if (event.type === "video_ready") {
+            setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "ready"; return n; });
+            setVideoResults((prev) => { const n = [...prev]; n[videoIndex] = { videoUrl: event.videoUrl }; return n; });
+            toast.success(`🏠 Video ${videoIndex + 1} ready!`, { id: `video-gen-${videoIndex}` });
+          }
+          if (event.type === "error") {
+            setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "error"; return n; });
+            toast.error(`Video ${videoIndex + 1} failed`, { description: event.message });
+          }
+        } catch {}
+      }
+    }
+  }
+
+  // ── Video generation (supports batch — sequential) ─────────────────────────
   async function handleGenerateVideo() {
-    if (!selectedComposite || !script.trim()) return;
+    const comps = selectedCompositeArray;
+    const scripts = isBatchMode ? batchScripts : [script];
+    if (comps.length === 0 || scripts.some((s) => !s?.trim())) return;
+
     setGenerating(true);
-    setVideoStatus("generating");
-    setVideoResult(null);
+    setVideoStatuses(comps.map(() => "generating"));
+    setVideoResults(comps.map(() => null));
+
+    for (let i = 0; i < comps.length; i++) {
+      try {
+        await generateSingleVideo(comps[i], scripts[i], i);
+      } catch (err) {
+        console.error(`Video ${i + 1} error:`, err);
+        setVideoStatuses((prev) => { const n = [...prev]; n[i] = "error"; return n; });
+        toast.error(`Video ${i + 1} failed`, { description: err.message });
+      }
+    }
+    setGenerating(false);
+  }
+
+  // ── Combine batch videos (client-side FFmpeg WASM) ─────────────────────────
+  async function handleCombineVideos() {
+    const readyUrls = videoResults.filter(Boolean).map((r) => r.videoUrl).filter(Boolean);
+    if (readyUrls.length < 2) return;
+
+    setCombining(true);
+    setCombineProgress("Initializing...");
+    setCombinedVideo(null);
 
     try {
-      const fd = new FormData();
-      fd.append("compositeImage", selectedComposite.file);
-      fd.append("script", script.trim());
-      // No voicePrompt — backend will generate it internally
+      const { blobUrl, blob } = await combineVideos(readyUrls, {
+        crossfadeDuration: 0.5,
+        onProgress: (msg) => setCombineProgress(msg),
+      });
 
-      const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Generation failed");
-      }
-      if (!response.body) throw new Error("No response stream");
+      setCombinedVideo({ blobUrl, serverUrl: null });
+      toast.success("Videos combined successfully!");
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === "progress") toast.info(event.message, { id: "video-gen" });
-            if (event.type === "video_ready") {
-              setVideoStatus("ready");
-              setVideoResult({ videoUrl: event.videoUrl });
-              toast.success("🏠 Video ready!", { id: "video-gen" });
-            }
-            if (event.type === "error") {
-              toast.error("Generation failed", { description: event.message });
-              setVideoStatus("error");
-            }
-          } catch {}
-        }
+      // Upload to server for permanent storage
+      setCombineProgress("Uploading to server...");
+      try {
+        const { url } = await uploadCombinedVideo(blob);
+        setCombinedVideo((prev) => ({ ...prev, serverUrl: url }));
+        toast.success("Combined video saved to Asset Library!");
+      } catch (uploadErr) {
+        console.error("Upload failed:", uploadErr);
+        toast.error("Upload failed — you can still download the video locally.");
       }
     } catch (err) {
-      console.error(err);
-      toast.error("Video generation failed", { description: err.message });
-      setVideoStatus("error");
+      console.error("Combine failed:", err);
+      toast.error("Video combining failed", { description: err.message });
     } finally {
-      setGenerating(false);
+      setCombining(false);
+      setCombineProgress("");
     }
   }
 
@@ -459,16 +603,19 @@ function RealEstateVideoContent() {
     setUploadedAvatarFile(null);
     setGeneratedAvatars([]);
     setComposites([]);
-    setSelectedCompositeIndex(null);
+    setSelectedCompositeIndices(new Set());
     setScript("");
-    setVideoStatus("idle");
-    setVideoResult(null);
+    setBatchScripts([]);
+    setVideoStatuses([]);
+    setVideoResults([]);
+    setCombinedVideo(null);
+    setCombining(false);
     setGenerating(false);
     setStep(0);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }
 
-  const showResults = videoStatus !== "idle";
+  const showResults = videoStatuses.length > 0 && videoStatuses.some((s) => s !== "idle");
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 animate-fade-in">
@@ -704,60 +851,196 @@ function RealEstateVideoContent() {
             )}
           </div>
 
-          {/* ── Property Brief (moved here from Step 2) ── */}
-          <div className="rounded-xl border border-border/50 p-4 bg-card/50 space-y-3">
-            <h3 className="text-sm font-semibold">Property Details <span className="text-muted-foreground font-normal text-xs">(helps AI write a better script)</span></h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Location (e.g., Gurgaon Sector 49)"
-                value={propertyBrief.location}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, location: e.target.value }))}
-              />
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Property type (e.g., 3BHK apartment)"
-                value={propertyBrief.propertyType}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, propertyType: e.target.value }))}
-              />
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Price (e.g., ₹1.2 Cr)"
-                value={propertyBrief.price}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, price: e.target.value }))}
-              />
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Bedrooms"
-                value={propertyBrief.bedrooms}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, bedrooms: e.target.value }))}
-              />
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Bathrooms"
-                value={propertyBrief.bathrooms}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, bathrooms: e.target.value }))}
-              />
-              <input
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Area / size (e.g., 1650 sq ft)"
-                value={propertyBrief.area}
-                onChange={(e) => setPropertyBrief((p) => ({ ...p, area: e.target.value }))}
-              />
-            </div>
-            <Textarea
-              placeholder="Key features (e.g., floor-to-ceiling windows, park view, modular kitchen)"
-              className="min-h-16 resize-none text-sm"
-              value={propertyBrief.keyFeatures}
-              onChange={(e) => setPropertyBrief((p) => ({ ...p, keyFeatures: e.target.value }))}
-            />
-            <Textarea
-              placeholder="Amenities (e.g., gym, pool, clubhouse, parking)"
-              className="min-h-16 resize-none text-sm"
-              value={propertyBrief.amenities}
-              onChange={(e) => setPropertyBrief((p) => ({ ...p, amenities: e.target.value }))}
-            />
-          </div>
+          {/* ── Property Details — Drawer Trigger ── */}
+          {(() => {
+            const filledCount = [
+              propertyBrief.location, propertyBrief.propertyType, propertyBrief.price || propertyBrief.priceRange,
+              propertyBrief.area, propertyBrief.furnishing, propertyBrief.facing, propertyBrief.floor,
+              (propertyBrief.selectedFeatures?.length > 0), (propertyBrief.selectedAmenities?.length > 0),
+            ].filter(Boolean).length;
+            return (
+              <button
+                onClick={() => setPropertyDrawerOpen(true)}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium">Property Details</span>
+                  <span className="text-xs text-muted-foreground">(optional — helps AI write better scripts)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {filledCount > 0 && (
+                    <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">{filledCount} filled</Badge>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                </div>
+              </button>
+            );
+          })()}
+
+          <Sheet open={propertyDrawerOpen} onOpenChange={setPropertyDrawerOpen}>
+            <SheetContent side="right" className="overflow-y-auto w-full sm:max-w-md">
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2 text-base">
+                  <Building2 className="w-4 h-4 text-primary" /> Property Details
+                </SheetTitle>
+                <SheetDescription className="text-xs">
+                  Fill in what you have — nothing is mandatory. This helps the AI write a more relevant script.
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="space-y-5 px-4 pb-6">
+                {/* Location */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Location</Label>
+                  <input
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    placeholder="e.g., Gurgaon Sector 49, Mumbai Bandra West"
+                    value={propertyBrief.location}
+                    onChange={(e) => setPropertyBrief((p) => ({ ...p, location: e.target.value }))}
+                  />
+                </div>
+
+                {/* Property Type */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Property Type</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROPERTY_TYPES.map((pt) => (
+                      <button key={pt} onClick={() => setPropertyBrief((p) => ({ ...p, propertyType: p.propertyType === pt ? "" : pt }))}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${propertyBrief.propertyType === pt ? "gradient-bg text-white shadow-sm" : "border border-border text-muted-foreground hover:border-primary/40 hover:bg-primary/5"}`}
+                      >{pt}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Price Range */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Price Range</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PRICE_RANGES.map((pr) => (
+                      <button key={pr.id} onClick={() => {
+                        if (pr.id === "custom") setPropertyBrief((p) => ({ ...p, priceRange: "custom" }));
+                        else setPropertyBrief((p) => ({ ...p, priceRange: p.priceRange === pr.id ? "" : pr.id, price: pr.label }));
+                      }}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${propertyBrief.priceRange === pr.id ? "gradient-bg text-white shadow-sm" : "border border-border text-muted-foreground hover:border-primary/40 hover:bg-primary/5"}`}
+                      >{pr.label}</button>
+                    ))}
+                  </div>
+                  {propertyBrief.priceRange === "custom" && (
+                    <input className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring mt-1.5"
+                      placeholder="Enter custom price (e.g., ₹95 Lakhs)" value={propertyBrief.price}
+                      onChange={(e) => setPropertyBrief((p) => ({ ...p, price: e.target.value }))} />
+                  )}
+                </div>
+
+                {/* Bed + Bath Steppers */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Bedrooms</Label>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setPropertyBrief((p) => ({ ...p, bedrooms: Math.max(0, p.bedrooms - 1) }))} className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-sm font-bold hover:bg-primary/10 cursor-pointer transition-colors">−</button>
+                      <span className="w-8 text-center text-sm font-bold">{propertyBrief.bedrooms}</span>
+                      <button onClick={() => setPropertyBrief((p) => ({ ...p, bedrooms: Math.min(10, p.bedrooms + 1) }))} className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-sm font-bold hover:bg-primary/10 cursor-pointer transition-colors">+</button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Bathrooms</Label>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setPropertyBrief((p) => ({ ...p, bathrooms: Math.max(0, p.bathrooms - 1) }))} className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-sm font-bold hover:bg-primary/10 cursor-pointer transition-colors">−</button>
+                      <span className="w-8 text-center text-sm font-bold">{propertyBrief.bathrooms}</span>
+                      <button onClick={() => setPropertyBrief((p) => ({ ...p, bathrooms: Math.min(10, p.bathrooms + 1) }))} className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-sm font-bold hover:bg-primary/10 cursor-pointer transition-colors">+</button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Area */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Area / Size</Label>
+                  <input className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    placeholder="e.g., 1650 sq ft" value={propertyBrief.area}
+                    onChange={(e) => setPropertyBrief((p) => ({ ...p, area: e.target.value }))} />
+                </div>
+
+                {/* Furnishing */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Furnishing</Label>
+                  <div className="flex gap-1.5">
+                    {FURNISHING_OPTIONS.map((f) => (
+                      <button key={f} onClick={() => setPropertyBrief((p) => ({ ...p, furnishing: p.furnishing === f ? "" : f }))}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${propertyBrief.furnishing === f ? "gradient-bg text-white shadow-sm" : "border border-border text-muted-foreground hover:border-primary/40"}`}
+                      >{f}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Facing */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Facing Direction</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {FACING_OPTIONS.map((dir) => (
+                      <button key={dir} onClick={() => setPropertyBrief((p) => ({ ...p, facing: p.facing === dir ? "" : dir }))}
+                        className={`w-10 h-10 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center ${propertyBrief.facing === dir ? "gradient-bg text-white shadow-sm" : "border border-border text-muted-foreground hover:border-primary/40"}`}
+                      >{dir}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Floor */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Floor</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {FLOOR_OPTIONS.map((fl) => (
+                      <button key={fl} onClick={() => setPropertyBrief((p) => ({ ...p, floor: p.floor === fl ? "" : fl }))}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${propertyBrief.floor === fl ? "gradient-bg text-white shadow-sm" : "border border-border text-muted-foreground hover:border-primary/40"}`}
+                      >{fl}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Key Features */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Key Features <span className="text-[10px]">(select all that apply)</span></Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {KEY_FEATURES.map((feat) => {
+                      const isOn = propertyBrief.selectedFeatures?.includes(feat);
+                      return (
+                        <button key={feat} onClick={() => setPropertyBrief((p) => ({
+                          ...p, selectedFeatures: isOn ? p.selectedFeatures.filter((f) => f !== feat) : [...(p.selectedFeatures || []), feat],
+                        }))}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer ${isOn ? "bg-primary/15 text-primary border border-primary/30" : "border border-border/60 text-muted-foreground hover:border-primary/30 hover:bg-primary/5"}`}
+                        >{isOn && <span className="mr-0.5">✓</span>} {feat}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Amenities */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Amenities</Label>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                    {AMENITIES.map((am) => {
+                      const isOn = propertyBrief.selectedAmenities?.includes(am.id);
+                      return (
+                        <button key={am.id} onClick={() => setPropertyBrief((p) => ({
+                          ...p, selectedAmenities: isOn ? p.selectedAmenities.filter((a) => a !== am.id) : [...(p.selectedAmenities || []), am.id],
+                        }))}
+                          className={`flex flex-col items-center gap-0.5 p-2 rounded-xl text-[10px] font-medium transition-all cursor-pointer ${isOn ? "bg-primary/15 text-primary border border-primary/30 shadow-sm" : "border border-border/60 text-muted-foreground hover:border-primary/30"}`}
+                        >
+                          <span className="text-base">{am.emoji}</span>
+                          <span className="truncate w-full text-center">{am.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Done button */}
+                <Button onClick={() => setPropertyDrawerOpen(false)} className="w-full gradient-bg text-white shadow-md cursor-pointer">
+                  <CheckCircle2 className="w-4 h-4 mr-1.5" /> Done
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
 
           {/* Next */}
           <div className="flex justify-end">
@@ -786,15 +1069,20 @@ function RealEstateVideoContent() {
         </div>
       )}
 
-      {/* ══════════════ STEP 1: Pick Composite ══════════════ */}
+      {/* ══════════════ STEP 1: Pick Composites (Multi-Select) ══════════════ */}
       {!showResults && step === 1 && (
         <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary" />
-            <span className="text-sm font-semibold">Pick Your Best Composite</span>
+            <span className="text-sm font-semibold">Select Composites</span>
+            {composites.length > 1 && (
+              <Badge variant="outline" className="text-[10px] ml-auto">
+                {selectedCompositeIndices.size}/{composites.length} selected
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Click your favorite — the rest get saved to your <strong>Asset Library</strong> for later.
+            Select <strong>one or more</strong> composites to generate videos for. Multiple selections = batch walkthrough with continuation scripts!
           </p>
 
           {generatingComposites && (
@@ -807,36 +1095,70 @@ function RealEstateVideoContent() {
 
           {composites.length > 0 && !generatingComposites && (
             <>
+              {/* Select All toggle */}
+              {composites.length > 1 && (
+                <button
+                  onClick={selectAllComposites}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    selectedCompositeIndices.size === composites.length
+                      ? "bg-primary/15 text-primary border border-primary/30"
+                      : "border border-border text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  {selectedCompositeIndices.size === composites.length ? "✓ All Selected" : "Select All"}
+                </button>
+              )}
+
               <div className={`grid gap-4 ${composites.length === 1 ? "grid-cols-1 max-w-xs mx-auto" : composites.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
-                {composites.map((comp, i) => (
-                  <div
-                    key={i}
-                    onClick={() => setSelectedCompositeIndex(i)}
-                    className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer group ${
-                      selectedCompositeIndex === i
-                        ? "border-primary ring-2 ring-primary/30 scale-[1.02]"
-                        : "border-border/50 hover:border-primary/50"
-                    }`}
-                  >
-                    <img src={comp.url} alt={comp.title} className="w-full rounded-xl" />
-                    <Badge className="absolute top-2 left-2 bg-black/70 text-white border-0 text-[10px] backdrop-blur-sm">
-                      <MapPin className="w-2.5 h-2.5 mr-0.5" /> {comp.title}
-                    </Badge>
-                    {selectedCompositeIndex === i && (
-                      <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-lg">
-                        <Check className="w-3.5 h-3.5 text-white" />
-                      </div>
-                    )}
-                    {selectedCompositeIndex !== null && selectedCompositeIndex !== i && composites.length > 1 && (
-                      <div className="absolute bottom-2 right-2 opacity-80">
-                        <Badge variant="outline" className="text-[9px] bg-black/50 text-white border-white/20 backdrop-blur-sm">
-                          <Save className="w-2.5 h-2.5 mr-0.5" /> Saved to Library
-                        </Badge>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {composites.map((comp, i) => {
+                  const isSelected = selectedCompositeIndices.has(i);
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => toggleComposite(i)}
+                      className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer group ${
+                        isSelected
+                          ? "border-primary ring-2 ring-primary/30 scale-[1.02]"
+                          : "border-border/50 hover:border-primary/50"
+                      }`}
+                    >
+                      <img src={comp.url} alt={comp.title} className="w-full rounded-xl" />
+                      <Badge className="absolute top-2 left-2 bg-black/70 text-white border-0 text-[10px] backdrop-blur-sm">
+                        <MapPin className="w-2.5 h-2.5 mr-0.5" /> {comp.title}
+                      </Badge>
+                      {isSelected && (
+                        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-lg">
+                          <Check className="w-3.5 h-3.5 text-white" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+
+              {/* Batch pricing banner */}
+              {selectedCompositeIndices.size > 1 && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 flex items-center gap-3">
+                  <span className="text-lg">🎬</span>
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                      Batch Walkthrough — {batchSize} videos
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {savings > 0 ? (
+                        <>
+                          <span className="line-through mr-1">{totalFullPrice} credits</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">{discountedTotal} credits</span>
+                          <span className="ml-1 text-emerald-600 dark:text-emerald-400">(save {savings}!)</span>
+                        </>
+                      ) : (
+                        <span>{discountedTotal} credits</span>
+                      )}
+                      {" · "}Continuation-style narrative scripts
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-center">
                 <Button variant="outline" size="sm" onClick={handleGenerateComposites} disabled={generatingComposites} className="cursor-pointer text-xs">
@@ -861,18 +1183,25 @@ function RealEstateVideoContent() {
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-primary" />
             <span className="text-sm font-semibold">Script & Generate</span>
+            {isBatchMode && (
+              <Badge className="gradient-bg text-white border-0 text-[10px]">
+                Batch · {batchSize} videos
+              </Badge>
+            )}
           </div>
 
-          {/* Composite preview */}
-          {selectedComposite && (
-            <div className="flex items-center gap-3 rounded-xl border border-border/50 p-2 bg-card/50">
-              <img src={selectedComposite.url} alt="Selected" className="w-14 h-20 rounded-lg object-cover border border-border" />
-              <div>
-                <p className="text-xs font-semibold">{selectedComposite.title}</p>
-                <p className="text-[10px] text-muted-foreground">Selected for video</p>
+          {/* Selected composites preview strip */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {selectedCompositeArray.map((comp, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-xl border border-border/50 p-1.5 bg-card/50 shrink-0">
+                <img src={comp.url} alt={comp.title} className="w-10 h-14 rounded-lg object-cover border border-border" />
+                <div>
+                  <p className="text-[10px] font-semibold">{comp.title}</p>
+                  <p className="text-[9px] text-muted-foreground">{isBatchMode ? `Video ${i + 1}` : "Selected"}</p>
+                </div>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
 
           {/* Language */}
           <div className="flex gap-2 flex-wrap">
@@ -919,35 +1248,68 @@ function RealEstateVideoContent() {
                 allowEmotionTags ? "translate-x-4" : "translate-x-0.5"
               }`} />
             </button>
-            <span className="text-xs text-muted-foreground">Allow emotion tags like <code className="text-primary bg-primary/10 px-1 rounded">{{happy}}</code> or <code className="text-primary bg-primary/10 px-1 rounded">{{sad}}</code> in script</span>
+            <span className="text-xs text-muted-foreground">Allow emotion tags like <code className="text-primary bg-primary/10 px-1 rounded">{`{{happy}}`}</code> in script</span>
           </div>
 
-          {/* Script */}
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <Label className="text-xs">What should the presenter say?</Label>
-              <span className={`text-xs font-mono ${script.length > MAX_SCRIPT ? "text-destructive font-bold" : "text-muted-foreground"}`}>
-                {script.length}/{MAX_SCRIPT}
-              </span>
+          {/* Script(s) — Batch vs Single */}
+          {isBatchMode ? (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Continuation Scripts ({batchSize} videos)</Label>
+                <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
+                  {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
+                  ✨ AI Write All
+                </Button>
+              </div>
+              {selectedCompositeArray.map((comp, i) => (
+                <div key={i} className="space-y-1 rounded-lg border border-border/40 p-3 bg-card/30">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[9px]">{i === 0 ? "Opening" : i === batchSize - 1 ? "Closing" : `Part ${i + 1}`}</Badge>
+                    <span className="text-[10px] text-muted-foreground">{comp.title}</span>
+                    <span className={`text-[10px] font-mono ml-auto ${(batchScripts[i] || "").length > MAX_SCRIPT ? "text-destructive" : "text-muted-foreground"}`}>
+                      {(batchScripts[i] || "").length}/{MAX_SCRIPT}
+                    </span>
+                  </div>
+                  <Textarea
+                    value={batchScripts[i] || ""}
+                    onChange={(e) => {
+                      const val = e.target.value.slice(0, MAX_SCRIPT);
+                      setBatchScripts((prev) => { const n = [...prev]; n[i] = val; return n; });
+                    }}
+                    placeholder={i === 0 ? "Opening hook + first space..." : i === batchSize - 1 ? "Final reveal + CTA..." : `Continuation for ${comp.title}...`}
+                    className="min-h-[70px] resize-none text-sm"
+                    maxLength={MAX_SCRIPT}
+                  />
+                </div>
+              ))}
             </div>
-            <Textarea
-              value={script}
-              onChange={(e) => setScript(e.target.value.slice(0, MAX_SCRIPT))}
-              placeholder="Describe the property highlights or let AI write for you..."
-              className="min-h-[100px] resize-none text-sm"
-              maxLength={MAX_SCRIPT}
-            />
-            <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
-              {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
-              ✨ AI Write Script
-            </Button>
-          </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-xs">What should the presenter say?</Label>
+                <span className={`text-xs font-mono ${script.length > MAX_SCRIPT ? "text-destructive font-bold" : "text-muted-foreground"}`}>
+                  {script.length}/{MAX_SCRIPT}
+                </span>
+              </div>
+              <Textarea
+                value={script}
+                onChange={(e) => setScript(e.target.value.slice(0, MAX_SCRIPT))}
+                placeholder="Describe the property highlights or let AI write for you..."
+                className="min-h-[100px] resize-none text-sm"
+                maxLength={MAX_SCRIPT}
+              />
+              <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
+                {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
+                ✨ AI Write Script
+              </Button>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(1)} className="cursor-pointer">Back</Button>
             <Button onClick={handleGenerateVideo} disabled={!step2Valid || generating} className="gradient-bg text-white shadow-md cursor-pointer px-8">
-              {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate Video</>}
+              {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4 mr-2" /> {isBatchMode ? `Generate ${batchSize} Videos` : "Generate Video"}</>}
             </Button>
           </div>
         </div>
@@ -958,32 +1320,102 @@ function RealEstateVideoContent() {
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">
-              {videoStatus === "ready" ? "✅ Your property video is ready!" : videoStatus === "error" ? "❌ Generation failed" : "🏠 Creating your property showcase..."}
+              {videoStatuses.every((s) => s === "ready")
+                ? `✅ ${videoStatuses.length > 1 ? `All ${videoStatuses.length} videos are` : "Your video is"} ready!`
+                : videoStatuses.some((s) => s === "error")
+                ? "⚠️ Some videos encountered errors"
+                : "🏠 Creating your property showcase..."}
             </h2>
-            {(videoStatus === "ready" || videoStatus === "error") && (
+            {videoStatuses.every((s) => s === "ready" || s === "error") && (
               <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">Start over</Button>
             )}
           </div>
 
           {/* Background generation notice */}
-          {videoStatus === "generating" && (
+          {videoStatuses.some((s) => s === "generating") && (
             <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-start gap-2">
               <span className="text-base">🎬</span>
               <div>
-                <p className="text-xs font-semibold text-primary mb-0.5">Generation running in the background</p>
+                <p className="text-xs font-semibold text-primary mb-0.5">
+                  Generating {videoStatuses.filter((s) => s === "generating").length} video(s)...
+                </p>
                 <p className="text-[11px] text-muted-foreground">
-                  You can freely browse other features — your video will be ready when you return. Progress is saved automatically.
+                  You can freely browse — progress is saved automatically.
                 </p>
               </div>
             </div>
           )}
 
-          <VideoCard status={videoStatus} video={videoResult} />
+          {/* Video cards */}
+          {videoStatuses.map((status, i) => (
+            <VideoCard key={i} status={status} video={videoResults[i]} />
+          ))}
 
-          {videoStatus === "ready" && (
+          {videoStatuses.every((s) => s === "ready") && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-center">
-              <p className="text-sm font-medium">🏠 Property showcase video generated!</p>
+              <p className="text-sm font-medium">🏠 {videoStatuses.length > 1 ? `${videoStatuses.length} property videos` : "Property showcase video"} generated!</p>
               <p className="text-xs text-muted-foreground mt-1">Auto-saved to your Asset Library.</p>
+            </div>
+          )}
+
+          {/* ── Combine Videos Section (batch only, 2+ videos ready) ── */}
+          {videoStatuses.length > 1 && videoStatuses.filter((s) => s === "ready").length >= 2 && (
+            <div className="rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-fuchsia-500/5 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-violet-500/20 flex items-center justify-center">
+                  <Film className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Combine into One Video</p>
+                  <p className="text-[11px] text-muted-foreground">Stitch all clips into a seamless walkthrough with crossfade transitions</p>
+                </div>
+              </div>
+
+              {!combinedVideo && !combining && (
+                <Button
+                  onClick={handleCombineVideos}
+                  className="w-full gradient-bg text-white shadow-md cursor-pointer gap-2"
+                >
+                  <Merge className="w-4 h-4" />
+                  Combine {videoStatuses.filter((s) => s === "ready").length} Videos
+                </Button>
+              )}
+
+              {combining && (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-violet-500/10 border border-violet-500/20">
+                  <Loader2 className="w-4 h-4 animate-spin text-violet-600 dark:text-violet-400 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">Processing in browser...</p>
+                    <p className="text-[11px] text-muted-foreground">{combineProgress || "Working..."}</p>
+                  </div>
+                </div>
+              )}
+
+              {combinedVideo && (
+                <div className="space-y-3">
+                  <div className="rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-80 mx-auto border border-violet-500/30">
+                    <video
+                      src={combinedVideo.serverUrl || combinedVideo.blobUrl}
+                      controls
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                  <div className="flex justify-center gap-3">
+                    <a
+                      href={combinedVideo.blobUrl}
+                      download="combined-walkthrough.mp4"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:text-violet-500 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download Combined
+                    </a>
+                    {combinedVideo.serverUrl && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="w-3 h-3" /> Saved to Library
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
