@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -15,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -146,6 +148,7 @@ function RealEstateVideoContent() {
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
   const [generatingScript, setGeneratingScript] = useState(false);
+  const [propertyDrawerOpen, setPropertyDrawerOpen] = useState(false);
   const [propertyBrief, setPropertyBrief] = useState({
     location: "",
     propertyType: "",

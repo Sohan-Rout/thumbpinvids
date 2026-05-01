@@ -389,7 +389,7 @@ export default function AssetLibraryPage() {
         className={`group cursor-pointer border-border/50 hover:shadow-lg transition-all hover:-translate-y-1 overflow-hidden ${
           isSelected ? "ring-2 ring-primary border-primary" : ""
         } ${isVideo ? "aspect-[9/16]" : ""}`}
-        onClick={() => setSelectedAsset(asset)}
+        onClick={() => { setSelectedAsset(asset); if (isVideo) setPreviewAsset(asset); }}
       >
         <CardContent className="p-0">
           <div className="aspect-square bg-gradient-to-br from-primary/10 to-accent/10 relative flex items-center justify-center overflow-hidden">
@@ -618,6 +618,27 @@ export default function AssetLibraryPage() {
           </TabsContent>
         </Tabs>
       )}
+
+      
+      {/* Preview Modal */}
+      <Dialog open={!!previewAsset} onOpenChange={(open) => !open && setPreviewAsset(null)}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden bg-black/95 border-border/50">
+          <div className="relative w-full h-[80vh] flex items-center justify-center">
+            {previewAsset && (
+              previewAsset.type === "video" || previewAsset.type === "clip" ? (
+                <video src={previewAsset.url} controls autoPlay className="max-w-full max-h-full object-contain" />
+              ) : (
+                <img src={previewAsset.url || previewAsset.image_url} alt={previewAsset.name} className="max-w-full max-h-full object-contain" />
+              )
+            )}
+            <div className="absolute top-4 left-4">
+              <Badge className="bg-black/50 text-white border-white/20 backdrop-blur">
+                {previewAsset?.name}
+              </Badge>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Upload Modal */}
       <Dialog open={uploadModalOpen} onOpenChange={(open) => !open && closeUploadModal()}>
