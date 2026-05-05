@@ -1,194 +1,210 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  Shield,
-  Eye,
-  EyeOff,
-  Lock,
-  Mail,
-  AlertCircle,
-  Github,
+  Users,
+  Image as ImageIcon,
+  CreditCard,
+  TrendingUp,
+  Crown,
+  UserCheck,
+  Clock,
+  ArrowRight,
+  BarChart3,
+  Zap,
 } from "lucide-react";
 
-export default function AdminLoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/admin/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Invalid credentials");
-        return;
-      }
-
-      router.push("/admin");
-    } catch {
-      setError("Something went wrong. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }
+function StatCard({ icon: Icon, label, value, sub, loading }) {
+  // Unified black and white styling
+  const containerStyle = "bg-white border border-gray-200 rounded-2xl p-5 hover:border-gray-400 transition-all duration-200 shadow-sm";
+  const iconContainerStyle = "w-10 h-10 rounded-xl border flex items-center justify-center bg-gray-100 border-gray-200 text-gray-900";
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
-      <div className="relative w-full max-w-sm bg-white border border-zinc-200 rounded-2xl shadow-sm p-8 animate-fade-in">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-2.5 mb-8">
-          <div className="w-9 h-9 rounded-lg bg-zinc-900 flex items-center justify-center">
-            <Shield className="w-4 h-4 text-white" />
-          </div>
-          <span className="text-zinc-900 font-semibold tracking-tight">
-            ThumbpinVids
-          </span>
+    <div className={containerStyle}>
+      <div className="flex items-start justify-between mb-4">
+        <div className={iconContainerStyle}>
+          <Icon className="w-5 h-5" />
         </div>
+      </div>
+      {loading ? (
+        <div className="space-y-2">
+          <div className="h-8 w-20 bg-gray-200 rounded-lg animate-pulse" />
+          <div className="h-4 w-32 bg-gray-200 rounded animate-pulse" />
+        </div>
+      ) : (
+        <>
+          <p className="text-3xl font-bold text-gray-900 font-heading">{value ?? "—"}</p>
+          <p className="text-sm text-gray-600 mt-1">{label}</p>
+          {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+        </>
+      )}
+    </div>
+  );
+}
 
-        {/* Header */}
-        <div className="text-center space-y-1.5 mb-6">
-          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">
-            Sign in to admin
-          </h1>
-          <p className="text-zinc-500 text-sm">
-            Enter your credentials to access the dashboard
+function RecentUserRow({ user }) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-xs font-semibold text-gray-600">
+          {(user.name || user.email)?.[0]?.toUpperCase()}
+        </div>
+        <div>
+          <p className="text-sm text-gray-900 font-medium leading-none">
+            {user.name || user.email.split("@")[0]}
           </p>
+          <p className="text-xs text-gray-500 mt-0.5">{user.email}</p>
         </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span
+          className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
+            user.plan === "pro"
+              ? "bg-gray-900 text-white border-gray-900"
+              : "bg-gray-50 text-gray-600 border-gray-200"
+          }`}
+        >
+          {user.plan === "pro" ? "Pro" : "Free"}
+        </span>
+        <span className="text-xs text-gray-500 font-mono">{user.credits} cr</span>
+      </div>
+    </div>
+  );
+}
 
-        {/* Error */}
-        {error && (
-          <div className="flex items-center gap-2.5 text-red-600 text-sm bg-red-50 border border-red-200/80 rounded-xl px-4 py-3 mb-5">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            {error}
-          </div>
-        )}
+export default function AdminDashboard() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
-          <div className="space-y-1.5">
-            <label
-              htmlFor="admin-email"
-              className="text-sm font-medium text-zinc-700"
-            >
-              Email
-            </label>
-            <div className="relative">
-              <Mail className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input
-                id="admin-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@adoraai.com"
-                required
-                className="w-full bg-white border border-zinc-200 rounded-xl pl-11 pr-4 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all"
-              />
+  useEffect(() => {
+    fetch("/api/admin/stats")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const stats = data?.stats;
+  const recentUsers = data?.recentUsers || [];
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-8 animate-fade-in bg-gray-50 min-h-screen p-4 sm:p-8 rounded-none sm:rounded-3xl">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 font-heading tracking-tight">
+          Dashboard
+        </h1>
+      </div>
+
+      {/* Quick Links */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Link
+          href="/admin/avatars"
+          className="group bg-white border border-gray-200 rounded-2xl p-5 hover:border-gray-900 transition-all duration-200 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center">
+                <ImageIcon className="w-5 h-5 text-gray-900" />
+              </div>
+              <div>
+                <p className="text-gray-900 font-semibold text-sm">Manage Avatars</p>
+                <p className="text-gray-500 text-xs mt-0.5">Upload, delete, organize</p>
+              </div>
             </div>
+            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
           </div>
+        </Link>
 
-          {/* Password */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label
-                htmlFor="admin-password"
-                className="text-sm font-medium text-zinc-700"
-              >
-                Password
-              </label>
-              <button
-                type="button"
-                className="text-xs font-medium text-zinc-400 hover:text-zinc-900 transition-colors"
-              >
-                Forgot password?
-              </button>
+        <Link
+          href="/admin/users"
+          className="group bg-white border border-gray-200 rounded-2xl p-5 hover:border-gray-900 transition-all duration-200 shadow-sm"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center">
+                <Users className="w-5 h-5 text-gray-900" />
+              </div>
+              <div>
+                <p className="text-gray-900 font-semibold text-sm">Manage Users</p>
+                <p className="text-gray-500 text-xs mt-0.5">Credits, plans, accounts</p>
+              </div>
             </div>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input
-                id="admin-password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                required
-                className="w-full bg-white border border-zinc-200 rounded-xl pl-11 pr-11 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 transition-colors"
-              >
-                {showPassword ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
-              </button>
-            </div>
+            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
           </div>
+        </Link>
+      </div>
 
-          {/* Submit */}
-          <button
-            id="admin-login-submit"
-            type="submit"
-            disabled={loading}
-            className="w-full bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-xl text-sm transition-all duration-200 hover:shadow-lg hover:shadow-zinc-900/10 active:scale-[0.98] mt-1"
+      {/* Stat Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <StatCard
+          icon={Users}
+          label="Total Users"
+          value={stats?.totalUsers?.toLocaleString()}
+          loading={loading}
+        />
+        <StatCard
+          icon={Crown}
+          label="Pro Users"
+          value={stats?.proUsers?.toLocaleString()}
+          sub={`${Math.round((stats?.proUsers / stats?.totalUsers) * 100) || 0}% conversion`}
+          loading={loading}
+        />
+        <StatCard
+          icon={UserCheck}
+          label="Free Users"
+          value={stats?.freeUsers?.toLocaleString()}
+          loading={loading}
+        />
+        <StatCard
+          icon={BarChart3}
+          label="Total Videos"
+          value={stats?.totalVideos?.toLocaleString()}
+          loading={loading}
+        />
+        <StatCard
+          icon={ImageIcon}
+          label="Avatar Assets"
+          value={stats?.totalAvatarAssets?.toLocaleString()}
+          loading={loading}
+        />
+        <StatCard
+          icon={Zap}
+          label="Credits In System"
+          value={stats?.totalCreditsInSystem?.toLocaleString()}
+          sub={`avg ${stats?.avgCreditsPerUser} per user`}
+          loading={loading}
+        />
+      </div>
+
+      {/* Recent Users */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-gray-500" />
+            <h2 className="text-sm font-semibold text-gray-900">Recent Signups</h2>
+          </div>
+          <Link
+            href="/admin/users"
+            className="text-xs text-gray-900 hover:underline flex items-center gap-1 transition-colors"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg
-                  className="animate-spin w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-                Signing in…
-              </span>
-            ) : (
-              "Sign in"
-            )}
-          </button>
-        </form>
-
-        {/* Footer */}
-        <p className="text-center text-zinc-400 text-xs mt-6">
-          Don&apos;t have access?{" "}
-          <button
-            type="button"
-            className="font-medium text-zinc-900 hover:underline underline-offset-2"
-          >
-            Contact support
-          </button>
-        </p>
+            View all <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
+        <div className="px-5">
+          {loading ? (
+            <div className="space-y-3 py-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-10 bg-gray-100 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : recentUsers.length === 0 ? (
+            <p className="text-gray-500 text-sm py-6 text-center">No users yet</p>
+          ) : (
+            recentUsers.map((u) => <RecentUserRow key={u._id} user={u} />)
+          )}
+        </div>
       </div>
     </div>
   );
