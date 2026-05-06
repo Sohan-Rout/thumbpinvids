@@ -133,9 +133,9 @@ export default function AdminLayout({ children }) {
           <button
             onClick={handleLogout}
             id="admin-logout"
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all border border-transparent hover:border-red-100"
+            className="w-full text-rose-500 flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-red-50 hover:text-red-600 transition-all border border-transparent hover:border-red-100"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-4 h-4 text-rose-500" />
             Logout
           </button>
         </div>
