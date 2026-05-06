@@ -5,11 +5,29 @@ import { authOptions } from "@/lib/auth-config";
 
 /**
  * POST /api/real-estate-video/generate-script
- * Generate real estate spokesperson scripts with strong hooks.
- * Supports single and batch mode (multiple properties).
  *
- * Single: compositeImage + propertyImage + language + tone → { script }
- * Batch:  compositeImage_0..N + propertyImage_0..N + compositeCount + language + tone → { scripts: [] }
+ * PRIMARY GOAL: Generate a rich, cinematic VIDEO AD PROMPT for each composite.
+ * This is NOT a script of what the presenter says — it is a full director's brief
+ * that gets passed directly to Veo 3.1 as the video generation prompt.
+ *
+ * The prompt includes:
+ *   - Opening camera move / shot style (cinematic, UGC, real estate)
+ *   - Avatar action / energy / pacing (fast → slow, turn → reveal, etc.)
+ *   - What the presenter says (short, punchy — ≤18 words, 8 seconds)
+ *   - Room/space atmosphere, lighting mood
+ *   - Closing beat
+ *
+ * Optional: if the user provides `userIntent` (something they want the presenter
+ * to say or highlight), it is woven into the spoken line organically.
+ *
+ * Returns:
+ *   hook        — short spoken fragment for UI preview (≤6 words)
+ *   walkthrough — medium spoken line for UI preview (≤10 words)
+ *   cta         — closing spoken fragment for UI preview (≤4 words)
+ *   fullScript  — THE CINEMATIC VEO PROMPT (2-4 rich sentences)
+ *
+ * Single:  compositeImage + propertyImage + [userIntent] → { script }
+ * Batch:   compositeImage_0..N + compositeCount + [userIntent_0..N or userIntent] → { scripts: [] }
  */
 export async function POST(request) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -24,139 +42,178 @@ export async function POST(request) {
     }
 
     const formData = await request.formData();
-    const language = formData.get("language") || "english";
-    const tone = formData.get("tone") || "professional";
-    const allowEmotionTags = formData.get("allowEmotionTags") === "true";
-    const location = formData.get("location") || "";
-    const propertyType = formData.get("propertyType") || "";
-    const price = formData.get("price") || "";
-    const bedrooms = formData.get("bedrooms") || "";
-    const bathrooms = formData.get("bathrooms") || "";
-    const area = formData.get("area") || "";
-    const keyFeatures = formData.get("keyFeatures") || "";
-    const amenities = formData.get("amenities") || "";
-    const compositeCount = parseInt(formData.get("compositeCount")) || 0;
+    const language        = formData.get("language")        || "english";
+    const tone            = formData.get("tone")            || "professional";
+    const allowEmotionTags= formData.get("allowEmotionTags") === "true";
+    const compositeCount  = parseInt(formData.get("compositeCount")) || 0;
+    // userIntent: optional text — what the user wants the presenter to say/highlight
+    const userIntent      = (formData.get("userIntent") || formData.get("script") || "").trim();
 
     async function fileToBase64(file) {
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      return {
-        data: buffer.toString("base64"),
-        mimeType: file.type || "image/jpeg",
-      };
+      const buf = Buffer.from(await file.arrayBuffer());
+      return { data: buf.toString("base64"), mimeType: file.type || "image/jpeg" };
     }
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const languageInstructions = {
-      english: "Write the script in natural, conversational English.",
-      hindi: "Write the script in natural, conversational Hindi (Devanagari script).",
-      hinglish: "Write the script in Hinglish — a natural mix of Hindi and English words as spoken casually in urban India. Use Roman script.",
-    };
-    const langInstruction = languageInstructions[language] || languageInstructions.english;
-
-    const emotionTagInstruction = allowEmotionTags
-      ? "You may insert emotion tags like {{happy}}, {{sad}}, {{excited}}, {{calm}} inline before the phrase they affect. Keep tags exactly as written."
-      : "Do NOT include any emotion tags or special markup.";
-
-    // Also try to read propertyBrief as JSON (sent by updated frontend)
-    let propertyBriefJson = null;
+    // ── Property brief ──────────────────────────────────────────────────────
+    let brief = {};
     try {
-      const rawBrief = formData.get("propertyBrief");
-      if (rawBrief) propertyBriefJson = JSON.parse(rawBrief);
+      const raw = formData.get("propertyBrief");
+      if (raw) brief = JSON.parse(raw);
     } catch {}
-
-    // Merge JSON brief fields with individual form fields
-    if (propertyBriefJson) {
-      if (!location && propertyBriefJson.location) {
-        // Override from JSON brief
-      }
-    }
+    const loc   = brief.location     || formData.get("location")     || "";
+    const ptype  = brief.propertyType || formData.get("propertyType") || "";
+    const price  = brief.price        || formData.get("price")        || "";
+    const beds   = brief.bedrooms     || formData.get("bedrooms")     || "";
+    const baths  = brief.bathrooms    || formData.get("bathrooms")    || "";
+    const area   = brief.area         || formData.get("area")         || "";
+    const feat   = brief.keyFeatures  || formData.get("keyFeatures")  || "";
+    const amen   = brief.amenities    || formData.get("amenities")    || "";
 
     const briefLines = [
-      (propertyBriefJson?.location || location) && `Location: ${propertyBriefJson?.location || location}`,
-      (propertyBriefJson?.propertyType || propertyType) && `Property type: ${propertyBriefJson?.propertyType || propertyType}`,
-      (propertyBriefJson?.price || price) && `Price: ${propertyBriefJson?.price || price}`,
-      (propertyBriefJson?.bedrooms || bedrooms) && `Bedrooms: ${propertyBriefJson?.bedrooms || bedrooms}`,
-      (propertyBriefJson?.bathrooms || bathrooms) && `Bathrooms: ${propertyBriefJson?.bathrooms || bathrooms}`,
-      (propertyBriefJson?.area || area) && `Area/size: ${propertyBriefJson?.area || area}`,
-      (propertyBriefJson?.keyFeatures || keyFeatures) && `Key features: ${propertyBriefJson?.keyFeatures || keyFeatures}`,
-      (propertyBriefJson?.amenities || amenities) && `Amenities: ${propertyBriefJson?.amenities || amenities}`,
-      propertyBriefJson?.furnishing && `Furnishing: ${propertyBriefJson.furnishing}`,
-      propertyBriefJson?.facing && `Facing: ${propertyBriefJson.facing}`,
-      propertyBriefJson?.floor && `Floor: ${propertyBriefJson.floor}`,
+      loc   && `Location: ${loc}`,
+      ptype && `Property type: ${ptype}`,
+      price && `Price: ${price}`,
+      beds  && `Beds: ${beds}`,
+      baths && `Baths: ${baths}`,
+      area  && `Area: ${area}`,
+      feat  && `Key features: ${feat}`,
+      amen  && `Amenities: ${amen}`,
+      brief.furnishing && `Furnishing: ${brief.furnishing}`,
+      brief.facing     && `Facing: ${brief.facing}`,
     ].filter(Boolean);
-    const briefBlock = briefLines.length ? `\n\nPROPERTY BRIEF:\n${briefLines.join("\n")}` : "";
+    const briefBlock = briefLines.length
+      ? `\nPROPERTY BRIEF:\n${briefLines.join("\n")}`
+      : "";
 
-    const RE_SCRIPT_PROMPT_BASE = `You are an expert real estate video script writer who creates VIRAL property showcase scripts for Instagram Reels and YouTube Shorts.
+    // ── Language / tone ──────────────────────────────────────────────────────
+    const langMap = {
+      english:  "The presenter speaks in natural, confident English.",
+      hindi:    "The presenter speaks in natural Hindi (Devanagari script).",
+      hinglish: "The presenter speaks in Hinglish — casual mix of Hindi and English in Roman script, as spoken in urban India.",
+    };
+    const langRule = langMap[language] || langMap.english;
 
-Your scripts must HOOK viewers in the first 2 seconds and make them WANT this property. Think like the best real estate influencers — aspirational, exciting, visual.
+    const emotionRule = allowEmotionTags
+      ? "You may embed emotion tags like {{excited}}, {{calm}}, {{happy}} immediately before the word/phrase they color. Keep tags exactly as written."
+      : "Do NOT include emotion tags or any special markup in the spoken text.";
 
-HOOK EXAMPLES (use these styles, create your own):
-- "Imagine waking up to THIS view every morning..."
-- "This 3BHK in Gurgaon just changed the game."
-- "₹85 lakhs for THIS? Let me show you..."
-- "I found the most STUNNING apartment in Sector 49..."
-- "Wait till you see the master bedroom..."
-- "This is what ₹1.2 cr buys you in 2025..."
-- "POV: You just walked into your dream home."
+    const userIntentBlock = userIntent
+      ? `\nUSER INTENT (MUST incorporate this into the spoken line):\n"${userIntent}"\n`
+      : "";
 
-REQUIREMENTS:
-- Maximum 25-30 words (must fit in 8 seconds of natural speech)
-- MUST start with a powerful, scroll-stopping hook (first 2-3 seconds)
-- Describe what makes THIS specific space special (reference what you SEE in the image)
-- End with curiosity or soft CTA ("Would you live here?", "DM for details", "Link in bio")
-- Tone: ${tone} — confident, aspirational, but genuine
-- ${langInstruction}
-- Sound like a REAL real estate creator, NOT a formal listing description
-- ${emotionTagInstruction}
-- Do NOT include stage directions, emojis, or any other formatting — just spoken words
+    // ── Shared director brief ────────────────────────────────────────────────
+    const DIRECTOR_BRIEF = `
+You are a world-class real estate UGC ad director who creates VIRAL Instagram Reels and YouTube Shorts for luxury and aspirational properties.
+
+YOUR JOB IS NOT to write a simple script. You are generating a FULL CINEMATIC VIDEO AD PROMPT — the exact instructions that will be sent to an AI video generator (Google Veo 3) to produce a jaw-dropping 8-second real estate clip.
+
+Think: cinematic opening shot → presenter energy → punchy spoken hook → reveal → emotional close.
+Take inspiration from the best real estate content creators: walking shots, quick zooms, turn-and-reveal moves, pull focus on architecture details, natural light flares.
 ${briefBlock}
+${userIntentBlock}
+LANGUAGE: ${langRule}
+EMOTION TAGS: ${emotionRule}
+TONE: ${tone}
 
-Return ONLY the script text, nothing else.`;
+═══════════════════════════════════════════════════════════
+⚠️  SPOKEN WORD BUDGET — 8 seconds MAXIMUM
+    Total spoken words must be ≤18 words across the entire clip.
+    Average speaking pace: 2.3 words/second.
+    ❌ Do NOT write long sentences — every word must earn its place.
+    ✅ Short, punchy fragments hit harder than full sentences.
+    ✅ Think: "This view. Every morning." not "You get this amazing view every single morning."
+═══════════════════════════════════════════════════════════
 
-    // ── BATCH MODE ──────────────────────────────────────────────────────────
+HOW TO WRITE THE CINEMATIC PROMPT (fullScript):
+Write 2-4 tight sentences describing:
+  1. OPENING SHOT: How the camera starts. Examples:
+     - "Slow cinematic push-in from wide-angle, revealing the presenter standing confidently at the center of a sun-drenched living room."
+     - "Camera starts close on a marble countertop detail, then pulls back to reveal the presenter with a smirk."
+     - "Handheld UGC-style shot — presenter walks toward camera fast, stops close, looks dead into lens."
+     - "Quick whip-pan from the window view to the presenter who's already mid-gesture."
+  2. PRESENTER ACTION: What does the presenter DO before speaking? (gesture, turn, step aside, look up, touch a surface)
+  3. SPOKEN LINE (≤18 words total, verbatim): Exactly what the presenter says. If user intent provided, honor it.
+  4. CLOSING ENERGY: How does the clip end? (lingering shot, quick cut, zoom-out, freeze on presenter)
+
+FOR THE UI FIELDS (hook / walkthrough / cta):
+  hook        — first 5-6 spoken words only (the attention-grabbing fragment)
+  walkthrough — middle 8-10 spoken words (the value reveal)
+  cta         — final 3-4 spoken words (the close)
+  These are for display in the editor UI — they are slices of the spoken line inside fullScript.
+  Do NOT add extra words — just slice the spoken line across the 3 fields.
+
+❌ ABSOLUTE RULE — NO TEXT ON SCREEN:
+  NEVER include instructions for text overlays, captions, subtitles, titles, price tags,
+  watermarks, lower thirds, or any on-screen graphics in the fullScript prompt.
+  The video must be 100% clean — no text whatsoever on the generated video.`;
+
+    // ── BATCH MODE ────────────────────────────────────────────────────────────
     if (compositeCount > 1) {
       const compositeFiles = [];
-      const propertyFiles = [];
+      const propertyFiles  = [];
+      const perClipIntents = [];
       for (let i = 0; i < compositeCount; i++) {
         const c = formData.get(`compositeImage_${i}`);
         const p = formData.get(`propertyImage_${i}`);
+        const u = formData.get(`userIntent_${i}`) || "";
         if (c) compositeFiles.push(c);
         if (p) propertyFiles.push(p);
+        perClipIntents.push(u.trim());
       }
 
       if (compositeFiles.length < 2) {
-        return NextResponse.json({ error: "Batch mode requires at least 2 composite images" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Batch mode requires at least 2 composite images" },
+          { status: 400 }
+        );
       }
 
       const compositeDataArr = await Promise.all(compositeFiles.map(fileToBase64));
-      const propertyDataArr = await Promise.all(propertyFiles.map(fileToBase64));
+      const propertyDataArr  = await Promise.all(propertyFiles.map(fileToBase64));
+      const N = compositeDataArr.length;
 
-      const batchPrompt = `${RE_SCRIPT_PROMPT_BASE}
+      // Per-clip user intents — fall back to shared userIntent
+      const intentLines = perClipIntents.map((u, i) => {
+        const resolved = u || userIntent;
+        return resolved ? `  Clip ${i + 1}: "${resolved}"` : `  Clip ${i + 1}: (none — AI decides)`;
+      }).join("\n");
 
-You are given ${compositeDataArr.length} different composite images — each shows the SAME person presenting DIFFERENT properties/rooms/spaces. You also have the original property images.
+      const batchPrompt = `${DIRECTOR_BRIEF}
 
-IMPORTANT — CONTINUATION NARRATIVE (this is a WALKTHROUGH, not separate videos):
-Write scripts that form a CONTINUOUS NARRATIVE WALKTHROUGH — as if the presenter is walking through different rooms/spaces of ONE property tour. The scripts should FLOW naturally from one to the next.
+You have ${N} composite images showing the SAME presenter in DIFFERENT rooms/spaces of the same property.
+Together they form a continuous walkthrough — each clip is 8 seconds. They will be stitched together.
 
-Script structure:
-- Script 1 (OPENING): Powerful scroll-stopping hook + introduce the first room/space. End with a natural transition cue like "And wait till you see what's next..." or "But this isn't even the best part..."
-- Script 2 (MIDDLE — if applicable): Natural continuation — "Now THIS is where it gets interesting..." or "Coming through to the..." Reference the previous space briefly, then highlight this new space. End with anticipation.
-- Script ${compositeDataArr.length} (CLOSING): Final reveal + aspirational closing CTA. Reference the journey ("After seeing all of this...") and end with "Would you live here?", "DM for details", or similar.
+PER-CLIP USER INTENT (what user wants said in each clip):
+${intentLines}
 
-Each script must:
-1. Reference what's visible in THAT specific space (room size, view, lighting, features)
-2. Flow NATURALLY from the previous script — they should feel like ONE continuous narration
-3. Be exactly 25-30 words (8 seconds of speech each)
+NARRATIVE ARC — this is a JOURNEY through one property:
+  Clip 1 = EXPLOSIVE ENTRY — make the viewer STOP scrolling. Big hook, big energy, WOW moment.
+  Clips 2 to ${N - 1} = STEADY REVEAL — each room is a new surprise, energy builds then eases.
+  Clip ${N} = SLOW CONFIDENT CLOSE — let the space breathe, presenter exudes certainty.
 
-Return your response as valid JSON ONLY — an array of strings:
-["script for property 1", "script for property 2", ...]`;
+CAMERA VARIETY (use DIFFERENT shots for each clip — do NOT repeat):
+  Clip 1 ideas: fast handheld rush-in, whip-pan reveal, close face then pull back
+  Middle ideas: smooth dolly through doorway, rack focus on feature then presenter, turn-and-gesture
+  Final ideas: slow push-in, presenter steps aside wide reveal, lingering hold then smile to camera
+
+Generate exactly ${N} cinematic video ad prompts.
+Return ONLY a valid JSON array:
+[
+  {
+    "hook": "5-6 words — first spoken fragment",
+    "walkthrough": "8-10 words — mid spoken reveal",
+    "cta": "3-4 words — closing fragment",
+    "fullScript": "Full 2-4 sentence cinematic Veo prompt with camera direction + presenter action + spoken line (≤18 words verbatim) + closing energy"
+  }
+]
+No markdown, no explanation, no text outside the JSON array.`;
 
       const parts = [
         { text: batchPrompt },
         ...compositeDataArr.map((d) => ({ inlineData: d })),
-        ...propertyDataArr.map((d) => ({ inlineData: d })),
+        ...propertyDataArr.map((d)  => ({ inlineData: d })),
       ];
 
       const response = await ai.models.generateContent({
@@ -166,24 +223,32 @@ Return your response as valid JSON ONLY — an array of strings:
 
       const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
       if (!rawText) {
-        return NextResponse.json({ error: "Failed to generate scripts" }, { status: 502 });
+        return NextResponse.json({ error: "Failed to generate prompts" }, { status: 502 });
       }
 
       let scripts;
       try {
         const jsonStr = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
         scripts = JSON.parse(jsonStr);
+        if (!Array.isArray(scripts)) throw new Error("Not an array");
+        scripts = scripts.map((s) => ({
+          hook:        (s.hook        || "").trim(),
+          walkthrough: (s.walkthrough || "").trim(),
+          cta:         (s.cta         || "").trim(),
+          fullScript:  (s.fullScript  || [s.hook, s.walkthrough, s.cta].filter(Boolean).join(" ")).trim(),
+        }));
       } catch {
-        scripts = rawText.split("\n").filter((s) => s.trim().length > 10).slice(0, compositeDataArr.length);
+        const lines = rawText.split("\n").filter((l) => l.trim().length > 20).slice(0, N);
+        scripts = lines.map((line) => ({ hook: "", walkthrough: "", cta: "", fullScript: line }));
       }
 
       return NextResponse.json({ success: true, scripts });
     }
 
-    // ── SINGLE MODE ─────────────────────────────────────────────────────────
+    // ── SINGLE MODE ───────────────────────────────────────────────────────────
     const compositeFile = formData.get("compositeImage");
-    const propertyFile = formData.get("propertyImage");
-    const hasBrief = !!(location || propertyType || price || bedrooms || bathrooms || area || keyFeatures || amenities);
+    const propertyFile  = formData.get("propertyImage");
+    const hasBrief = !!(loc || ptype || price || beds || baths || area || feat || amen);
 
     if (!compositeFile && !propertyFile && !hasBrief) {
       return NextResponse.json(
@@ -192,29 +257,54 @@ Return your response as valid JSON ONLY — an array of strings:
       );
     }
 
-    const parts = [{
-      text: RE_SCRIPT_PROMPT_BASE + "\n\nIf provided, use the images and property brief to write one 8-second script."
-    }];
+    const singlePrompt = `${DIRECTOR_BRIEF}
 
-    if (compositeFile) {
-      const compositeData = await fileToBase64(compositeFile);
-      parts.push({ inlineData: compositeData });
-    }
-    if (propertyFile) parts.push({ inlineData: await fileToBase64(propertyFile) });
+You have ONE composite image showing a presenter in a property space.
+
+Generate ONE cinematic 8-second real estate video ad prompt.
+
+Return ONLY a valid JSON object:
+{
+  "hook": "5-6 words — first spoken fragment",
+  "walkthrough": "8-10 words — mid spoken reveal",
+  "cta": "3-4 words — closing fragment",
+  "fullScript": "Full 2-4 sentence cinematic Veo prompt with camera direction + presenter action + spoken line (≤18 words verbatim) + closing energy"
+}
+No markdown, no explanation, no text outside the JSON object.`;
+
+    const parts = [{ text: singlePrompt }];
+    if (compositeFile) parts.push({ inlineData: await fileToBase64(compositeFile) });
+    if (propertyFile)  parts.push({ inlineData: await fileToBase64(propertyFile)  });
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [{ parts }],
     });
 
-    const scriptText = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!scriptText) {
-      return NextResponse.json({ error: "Failed to generate script" }, { status: 502 });
+    const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!rawText) {
+      return NextResponse.json({ error: "Failed to generate prompt" }, { status: 502 });
     }
 
-    return NextResponse.json({ success: true, script: scriptText });
+    let scriptObj;
+    try {
+      const jsonStr = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      scriptObj = JSON.parse(jsonStr);
+      if (!scriptObj.fullScript) {
+        scriptObj.fullScript = [scriptObj.hook, scriptObj.walkthrough, scriptObj.cta]
+          .filter(Boolean).join(" ");
+      }
+    } catch {
+      scriptObj = { hook: "", walkthrough: "", cta: "", fullScript: rawText };
+    }
+
+    return NextResponse.json({ success: true, script: scriptObj });
+
   } catch (error) {
-    console.error("[RealEstateVideo] Generate script error:", error);
-    return NextResponse.json({ error: error.message || "Script generation failed" }, { status: 500 });
+    console.error("[RealEstateVideo] Generate prompt error:", error);
+    return NextResponse.json(
+      { error: error.message || "Prompt generation failed" },
+      { status: 500 }
+    );
   }
 }

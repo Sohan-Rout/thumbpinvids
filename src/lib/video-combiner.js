@@ -1,146 +1,137 @@
 /**
  * Client-side video combiner using FFmpeg WASM
- * Combines multiple video clips into one with crossfade transitions.
+ * Combines multiple video clips into one with simple concatenation.
  * Runs entirely in the browser — no server-side FFmpeg needed.
+ *
+ * Fix: always create a fresh FFmpeg instance per call to avoid
+ * virtual FS state corruption ("ErrnoError: FS error") across invocations.
  */
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL, fetchFile } from "@ffmpeg/util";
 
-let ffmpegInstance = null;
-let loadingPromise = null;
-
 /**
- * Lazily load FFmpeg WASM (single-threaded core — no SharedArrayBuffer needed)
+ * Load a fresh FFmpeg WASM instance (single-threaded core).
+ * We do NOT cache the instance — a dirty FS causes ErrnoError on reuse.
  */
-async function getFFmpeg(onLog) {
-  if (ffmpegInstance?.loaded) return ffmpegInstance;
+async function loadFreshFFmpeg(onLog) {
+  const ffmpeg = new FFmpeg();
 
-  if (loadingPromise) return loadingPromise;
+  if (onLog) {
+    ffmpeg.on("log", ({ message }) => onLog(message));
+  }
 
-  loadingPromise = (async () => {
-    const ffmpeg = new FFmpeg();
+  // Single-threaded core from CDN — no COOP/COEP headers required
+  const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
 
-    if (onLog) {
-      ffmpeg.on("log", ({ message }) => onLog(message));
-    }
-
-    // Load single-threaded core from CDN (avoids COOP/COEP header requirements)
-    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-    });
-
-    ffmpegInstance = ffmpeg;
-    return ffmpeg;
-  })();
-
-  return loadingPromise;
+  return ffmpeg;
 }
 
 /**
- * Combine multiple video URLs into a single video with crossfade transitions.
+ * Combine multiple video URLs into a single video.
+ * Uses concat demuxer for reliability across all clip counts.
  *
  * @param {string[]} videoUrls - Array of video URLs to combine
- * @param {object} options
- * @param {number} options.crossfadeDuration - Duration of crossfade in seconds (default: 0.5)
+ * @param {object}   options
  * @param {function} options.onProgress - Progress callback (message: string)
- * @param {function} options.onLog - FFmpeg log callback
- * @returns {Promise<{ blobUrl: string, blob: Blob }>} Combined video blob URL + blob
+ * @param {function} options.onLog      - FFmpeg log callback
+ * @returns {Promise<{ blobUrl: string, blob: Blob }>}
  */
 export async function combineVideos(videoUrls, options = {}) {
-  const { crossfadeDuration = 0.5, onProgress, onLog } = options;
+  const { onProgress, onLog } = options;
 
   if (!videoUrls || videoUrls.length === 0) {
     throw new Error("No video URLs provided");
   }
 
-  // Single video — no combining needed
+  // Single video — just pass it through
   if (videoUrls.length === 1) {
+    onProgress?.("Fetching video...");
     const response = await fetch(videoUrls[0]);
+    if (!response.ok) throw new Error(`Failed to fetch video: ${response.status}`);
     const blob = await response.blob();
     return { blobUrl: URL.createObjectURL(blob), blob };
   }
 
   onProgress?.("Loading FFmpeg engine...");
-  const ffmpeg = await getFFmpeg(onLog);
+  // Fresh instance every time — prevents FS state corruption
+  const ffmpeg = await loadFreshFFmpeg(onLog);
 
-  // Download all videos and write to FFmpeg's virtual filesystem
-  for (let i = 0; i < videoUrls.length; i++) {
-    onProgress?.(`Downloading video ${i + 1}/${videoUrls.length}...`);
-    const data = await fetchFile(videoUrls[i]);
-    await ffmpeg.writeFile(`input${i}.mp4`, data);
+  try {
+    // Download all videos into FFmpeg's virtual FS
+    for (let i = 0; i < videoUrls.length; i++) {
+      onProgress?.(`Downloading clip ${i + 1} of ${videoUrls.length}...`);
+      let data;
+      try {
+        data = await fetchFile(videoUrls[i]);
+      } catch (fetchErr) {
+        throw new Error(`Failed to fetch clip ${i + 1}: ${fetchErr.message}`);
+      }
+      await ffmpeg.writeFile(`input${i}.mp4`, data);
+    }
+
+    onProgress?.("Concatenating clips...");
+
+    // Write concat list — use concat demuxer (most reliable in WASM environment)
+    const concatList = videoUrls.map((_, i) => `file 'input${i}.mp4'`).join("\n");
+    await ffmpeg.writeFile("concat.txt", new TextEncoder().encode(concatList));
+
+    // Concat with stream copy first (fast, no re-encoding)
+    // If streams are incompatible, re-encode with libx264
+    let execResult;
+    try {
+      execResult = await ffmpeg.exec([
+        "-f", "concat",
+        "-safe", "0",
+        "-i", "concat.txt",
+        "-c", "copy",           // stream copy — fastest, no quality loss
+        "-movflags", "+faststart",
+        "output.mp4",
+      ]);
+    } catch (copyErr) {
+      // Fallback: re-encode if stream copy fails (e.g. mismatched codecs)
+      onProgress?.("Re-encoding for compatibility...");
+      await ffmpeg.exec([
+        "-f", "concat",
+        "-safe", "0",
+        "-i", "concat.txt",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        "output.mp4",
+      ]);
+    }
+
+    onProgress?.("Finalizing combined video...");
+
+    const outputData = await ffmpeg.readFile("output.mp4");
+    const blob = new Blob([outputData.buffer], { type: "video/mp4" });
+    const blobUrl = URL.createObjectURL(blob);
+
+    onProgress?.("Done!");
+    return { blobUrl, blob };
+
+  } finally {
+    // Best-effort cleanup of the virtual FS
+    for (let i = 0; i < videoUrls.length; i++) {
+      try { await ffmpeg.deleteFile(`input${i}.mp4`); } catch {}
+    }
+    try { await ffmpeg.deleteFile("output.mp4"); } catch {}
+    try { await ffmpeg.deleteFile("concat.txt"); } catch {}
   }
-
-  // Strategy: For 2+ videos, use xfade crossfade filter
-  onProgress?.("Stitching videos with crossfade transitions...");
-
-  if (videoUrls.length === 2) {
-    // Simple 2-video crossfade
-    await ffmpeg.exec([
-      "-i", "input0.mp4",
-      "-i", "input1.mp4",
-      "-filter_complex",
-      `[0:v][1:v]xfade=transition=fade:duration=${crossfadeDuration}:offset=auto[outv];[0:a][1:a]acrossfade=d=${crossfadeDuration}[outa]`,
-      "-map", "[outv]",
-      "-map", "[outa]",
-      "-c:v", "libx264",
-      "-preset", "fast",
-      "-crf", "23",
-      "-c:a", "aac",
-      "-b:a", "128k",
-      "-movflags", "+faststart",
-      "output.mp4",
-    ]);
-  } else {
-    // 3+ videos: Use concat demuxer (simpler, more reliable in WASM)
-    // Create a concat list file
-    const concatList = videoUrls
-      .map((_, i) => `file 'input${i}.mp4'`)
-      .join("\n");
-
-    await ffmpeg.writeFile(
-      "concat.txt",
-      new TextEncoder().encode(concatList)
-    );
-
-    await ffmpeg.exec([
-      "-f", "concat",
-      "-safe", "0",
-      "-i", "concat.txt",
-      "-c:v", "libx264",
-      "-preset", "fast",
-      "-crf", "23",
-      "-c:a", "aac",
-      "-b:a", "128k",
-      "-movflags", "+faststart",
-      "output.mp4",
-    ]);
-  }
-
-  onProgress?.("Finalizing combined video...");
-
-  // Read the output
-  const outputData = await ffmpeg.readFile("output.mp4");
-  const blob = new Blob([outputData.buffer], { type: "video/mp4" });
-  const blobUrl = URL.createObjectURL(blob);
-
-  // Clean up virtual filesystem
-  for (let i = 0; i < videoUrls.length; i++) {
-    try { await ffmpeg.deleteFile(`input${i}.mp4`); } catch {}
-  }
-  try { await ffmpeg.deleteFile("output.mp4"); } catch {}
-  try { await ffmpeg.deleteFile("concat.txt"); } catch {}
-
-  onProgress?.("Done!");
-  return { blobUrl, blob };
 }
 
 /**
  * Upload a combined video blob to the server for permanent storage.
  *
- * @param {Blob} blob - The combined video blob
+ * @param {Blob}   blob     - The combined video blob
  * @param {string} filename - Desired filename
  * @returns {Promise<{ url: string }>} Permanent URL
  */
@@ -154,8 +145,8 @@ export async function uploadCombinedVideo(blob, filename = "combined-walkthrough
   });
 
   if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || "Failed to save combined video");
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Server error: ${res.status}`);
   }
 
   return res.json();

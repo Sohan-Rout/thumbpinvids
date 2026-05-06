@@ -89,7 +89,8 @@ OUTPUT:
 - The person takes up approximately 30-50% of the frame height depending on their distance from camera
 - The result must look like the person was ACTUALLY photographed at this location — indistinguishable from a real photograph
 - Professional real estate presenter body language — confident posture, warm smile
-- Premium quality, photorealistic, no AI artifacts, no uncanny valley effects`;
+- Premium quality, photorealistic, no AI artifacts, no uncanny valley effects
+- ❌ ABSOLUTELY NO TEXT, NO LABELS, NO PRICE TAGS, NO CAPTIONS, NO WATERMARKS, NO OVERLAYS of any kind — pure clean image only`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-image-preview",

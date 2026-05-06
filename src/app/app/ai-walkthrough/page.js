@@ -278,7 +278,10 @@ function RealEstateVideoContent() {
 
   // Step 2: Script + Generate (voice is backend-only)
   const [script, setScript] = useState("");
-  const [batchScripts, setBatchScripts] = useState([]);
+  const [batchScripts, setBatchScripts] = useState([]); // legacy plain strings (single mode fallback)
+  // Structured scripts: [{ hook, walkthrough, cta, fullScript }]
+  const [structuredScripts, setStructuredScripts] = useState([]);
+  const [sharedVoicePrompt, setSharedVoicePrompt] = useState(""); // captured from video 0, reused for all
   const [language, setLanguage] = useState("english");
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
@@ -346,7 +349,10 @@ function RealEstateVideoContent() {
   // Validity
   const step0Valid = propertyImages.length >= 1 && !!selectedAvatar;
   const step1Valid = selectedCompositeIndices.size >= 1;
-  const step2Valid = isBatchMode ? batchScripts.length === batchSize && batchScripts.every((s) => s.trim().length >= 15) : script.trim().length >= 15;
+  // In batch mode, validate using structuredScripts.fullScript (falls back to batchScripts if structured not yet set)
+  const step2Valid = isBatchMode
+    ? structuredScripts.length === batchSize && structuredScripts.every((s) => (s.fullScript || "").trim().length >= 15)
+    : script.trim().length >= 15;
 
   // ── Avatar generation ──────────────────────────────────────────────────────
   async function handleGenerateAvatars() {
@@ -443,11 +449,15 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Proceed from composite pick → script ───────────────────────────────────
+  // ── Proceed from composite pick → script (auto-generate in batch mode) ──────
   async function handleCompositeNext() {
     if (selectedCompositeIndices.size === 0) return;
     saveUnusedComposites(); // background
     setStep(2);
+    // Auto-generate structured scripts in batch mode when entering Step 2
+    if (selectedCompositeIndices.size > 1) {
+      setTimeout(() => handleGenerateScript(), 100);
+    }
   }
 
   // ── Script generation (single + batch) ─────────────────────────────────────
@@ -456,7 +466,6 @@ function RealEstateVideoContent() {
     setGeneratingScript(true);
     try {
       const fd = new FormData();
-      // Build brief with combined features/amenities
       const enrichedBrief = {
         ...propertyBrief,
         keyFeatures: [...(propertyBrief.selectedFeatures || []), propertyBrief.keyFeatures].filter(Boolean).join(", "),
@@ -469,6 +478,8 @@ function RealEstateVideoContent() {
 
       if (isBatchMode) {
         fd.append("compositeCount", String(selectedCompositeArray.length));
+        // Shared user intent for batch (individual clip intents can be added later via userIntent_i)
+        if (script.trim()) fd.append("userIntent", script.trim());
         for (let i = 0; i < selectedCompositeArray.length; i++) {
           fd.append(`compositeImage_${i}`, selectedCompositeArray[i].file);
           const propIdx = selectedCompositeArray[i].propertyIndex ?? 0;
@@ -477,16 +488,26 @@ function RealEstateVideoContent() {
         const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Script generation failed");
-        setBatchScripts(data.scripts || []);
-        toast.success(`${data.scripts?.length || 0} continuation scripts generated!`);
+        // data.scripts is now [{ hook, walkthrough, cta, fullScript }]
+        setStructuredScripts(data.scripts || []);
+        // Keep legacy batchScripts in sync (fullScript strings) for any old consumers
+        setBatchScripts((data.scripts || []).map((s) => s.fullScript || ""));
+        toast.success(`${data.scripts?.length || 0} structured scripts generated!`);
       } else {
         fd.append("compositeImage", selectedCompositeArray[0].file);
+        // Pass whatever the user typed as their intent — AI will weave it into the cinematic prompt
+        if (script.trim()) fd.append("userIntent", script.trim());
         const propIdx = selectedCompositeArray[0].propertyIndex ?? 0;
         if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
         const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Script generation failed");
-        setScript(data.script);
+        // data.script is { hook, walkthrough, cta, fullScript }
+        if (data.script?.fullScript) {
+          setScript(data.script.fullScript);
+        } else if (typeof data.script === "string") {
+          setScript(data.script);
+        }
         toast.success("Script generated!");
       }
     } catch (err) {
@@ -496,11 +517,12 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Single video generation via SSE ────────────────────────────────────────
-  async function generateSingleVideo(composite, scriptText, videoIndex) {
+  // ── Single video generation via SSE (returns captured voice prompt) ──────────
+  async function generateSingleVideo(composite, scriptText, videoIndex, providedVoicePrompt) {
     const fd = new FormData();
     fd.append("compositeImage", composite.file);
     fd.append("script", scriptText.trim());
+    if (providedVoicePrompt) fd.append("sharedVoicePrompt", providedVoicePrompt);
 
     const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
     if (!response.ok) {
@@ -512,6 +534,7 @@ function RealEstateVideoContent() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let capturedVoice = "";
 
     while (true) {
       const { value, done: streamDone } = await reader.read();
@@ -524,6 +547,10 @@ function RealEstateVideoContent() {
         try {
           const event = JSON.parse(line.slice(6));
           if (event.type === "progress") toast.info(event.message, { id: `video-gen-${videoIndex}` });
+          if (event.type === "voice_ready" && event.voicePrompt) {
+            capturedVoice = event.voicePrompt;
+            if (videoIndex === 0) setSharedVoicePrompt(event.voicePrompt);
+          }
           if (event.type === "video_ready") {
             setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "ready"; return n; });
             setVideoResults((prev) => { const n = [...prev]; n[videoIndex] = { videoUrl: event.videoUrl }; return n; });
@@ -536,21 +563,29 @@ function RealEstateVideoContent() {
         } catch {}
       }
     }
+    return capturedVoice;
   }
 
-  // ── Video generation (supports batch — sequential) ─────────────────────────
+  // ── Video generation (batch — sequential, shared voice) ─────────────────────
   async function handleGenerateVideo() {
     const comps = selectedCompositeArray;
-    const scripts = isBatchMode ? batchScripts : [script];
+    // Batch: derive spoken lines from structuredScripts; single: plain script
+    const scripts = isBatchMode
+      ? structuredScripts.map((s) => s.fullScript || "")
+      : [script];
     if (comps.length === 0 || scripts.some((s) => !s?.trim())) return;
 
     setGenerating(true);
+    setSharedVoicePrompt(""); // reset before new batch
     setVideoStatuses(comps.map(() => "generating"));
     setVideoResults(comps.map(() => null));
 
+    let capturedVoice = "";
     for (let i = 0; i < comps.length; i++) {
       try {
-        await generateSingleVideo(comps[i], scripts[i], i);
+        // Video 0 generates voice; all subsequent clips receive it
+        const returned = await generateSingleVideo(comps[i], scripts[i], i, i > 0 ? capturedVoice : undefined);
+        if (i === 0 && returned) capturedVoice = returned;
       } catch (err) {
         console.error(`Video ${i + 1} error:`, err);
         setVideoStatuses((prev) => { const n = [...prev]; n[i] = "error"; return n; });
@@ -606,6 +641,8 @@ function RealEstateVideoContent() {
     setSelectedCompositeIndices(new Set());
     setScript("");
     setBatchScripts([]);
+    setStructuredScripts([]);
+    setSharedVoicePrompt("");
     setVideoStatuses([]);
     setVideoResults([]);
     setCombinedVideo(null);
@@ -1255,38 +1292,89 @@ function RealEstateVideoContent() {
           {isBatchMode ? (
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <Label className="text-xs">Continuation Scripts ({batchSize} videos)</Label>
+                <Label className="text-xs">
+                  UGC Scripts · {batchSize} clips · 8s each
+                  {sharedVoicePrompt && <span className="ml-2 text-[10px] text-emerald-500 font-medium">🎙️ Shared voice active</span>}
+                </Label>
                 <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
                   {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
-                  ✨ AI Write All
+                  ✨ {generatingScript ? "Generating…" : "AI Write All"}
                 </Button>
               </div>
-              {selectedCompositeArray.map((comp, i) => (
-                <div key={i} className="space-y-1 rounded-lg border border-border/40 p-3 bg-card/30">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[9px]">{i === 0 ? "Opening" : i === batchSize - 1 ? "Closing" : `Part ${i + 1}`}</Badge>
-                    <span className="text-[10px] text-muted-foreground">{comp.title}</span>
-                    <span className={`text-[10px] font-mono ml-auto ${(batchScripts[i] || "").length > MAX_SCRIPT ? "text-destructive" : "text-muted-foreground"}`}>
-                      {(batchScripts[i] || "").length}/{MAX_SCRIPT}
-                    </span>
-                  </div>
-                  <Textarea
-                    value={batchScripts[i] || ""}
-                    onChange={(e) => {
-                      const val = e.target.value.slice(0, MAX_SCRIPT);
-                      setBatchScripts((prev) => { const n = [...prev]; n[i] = val; return n; });
-                    }}
-                    placeholder={i === 0 ? "Opening hook + first space..." : i === batchSize - 1 ? "Final reveal + CTA..." : `Continuation for ${comp.title}...`}
-                    className="min-h-[70px] resize-none text-sm"
-                    maxLength={MAX_SCRIPT}
-                  />
+
+              {generatingScript && structuredScripts.length === 0 && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-4 rounded-lg border border-dashed border-border/50">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  Crafting your {batchSize}-clip walkthrough…
                 </div>
-              ))}
+              )}
+
+              {selectedCompositeArray.map((comp, i) => {
+                const ss = structuredScripts[i] || {};
+                const label = i === 0 ? "Opening" : i === batchSize - 1 ? "Closing" : `Clip ${i + 1}`;
+                return (
+                  <div key={i} className="rounded-xl border border-border/50 bg-card/40 overflow-hidden">
+                    {/* Card header */}
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-card/60">
+                      <Badge variant="outline" className="text-[9px]">{label}</Badge>
+                      <img src={comp.url} alt={comp.title} className="w-5 h-7 rounded object-cover border border-border/50" />
+                      <span className="text-[10px] text-muted-foreground truncate">{comp.title}</span>
+                      <span className="text-[9px] font-mono ml-auto text-muted-foreground">8s clip</span>
+                    </div>
+                    <div className="p-3 space-y-2.5">
+                      {/* Per-clip user intent */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                          Anything specific to say? <span className="font-normal normal-case">(optional)</span>
+                        </label>
+                        <Textarea
+                          value={ss._userIntent || ""}
+                          onChange={(e) => {
+                            setStructuredScripts((prev) => {
+                              const n = [...prev];
+                              n[i] = { ...(n[i] || {}), _userIntent: e.target.value };
+                              return n;
+                            });
+                          }}
+                          placeholder={`e.g. "mention the floor-to-ceiling windows" or "say it's move-in ready"`}
+                          className="min-h-[44px] resize-none text-xs"
+                        />
+                      </div>
+                      {/* Read-only AI prompt preview */}
+                      {ss.fullScript ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-purple-500">🎬 AI Cinematic Prompt</span>
+                            <span className="text-[9px] text-muted-foreground">sent to Veo — edit if needed</span>
+                          </div>
+                          <Textarea
+                            value={ss.fullScript}
+                            onChange={(e) => {
+                              setStructuredScripts((prev) => {
+                                const n = [...prev];
+                                n[i] = { ...(n[i] || {}), fullScript: e.target.value };
+                                setBatchScripts((bs) => { const b = [...bs]; b[i] = e.target.value; return b; });
+                                return n;
+                              });
+                            }}
+                            className="min-h-[72px] resize-none text-xs text-muted-foreground"
+                          />
+                        </div>
+                      ) : generatingScript ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Generating cinematic prompt…
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+
             </div>
           ) : (
             <div className="space-y-2">
               <div className="flex justify-between">
-                <Label className="text-xs">What should the presenter say?</Label>
+                <Label className="text-xs">Anything specific you want the presenter to say? <span className="text-muted-foreground font-normal">(optional)</span></Label>
                 <span className={`text-xs font-mono ${script.length > MAX_SCRIPT ? "text-destructive font-bold" : "text-muted-foreground"}`}>
                   {script.length}/{MAX_SCRIPT}
                 </span>
@@ -1294,13 +1382,13 @@ function RealEstateVideoContent() {
               <Textarea
                 value={script}
                 onChange={(e) => setScript(e.target.value.slice(0, MAX_SCRIPT))}
-                placeholder="Describe the property highlights or let AI write for you..."
+                placeholder="Optional · e.g. 'mention the terrace view' or 'say it's move-in ready' — AI builds the full cinematic ad prompt around this"
                 className="min-h-[100px] resize-none text-sm"
                 maxLength={MAX_SCRIPT}
               />
               <Button variant="outline" size="sm" onClick={handleGenerateScript} disabled={generatingScript} className="cursor-pointer text-xs">
                 {generatingScript ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <PenLine className="w-3 h-3 mr-1" />}
-                ✨ AI Write Script
+                ✨ Generate Ad Prompt
               </Button>
             </div>
           )}
