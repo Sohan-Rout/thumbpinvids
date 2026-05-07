@@ -43,28 +43,28 @@ export default function AdminUsersPage() {
     }
   }, [page, debouncedSearch]);
 
-useEffect(() => {
-  const fetchUsers = async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ page, limit: 20 });
-      if (debouncedSearch) params.set("q", debouncedSearch);
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ page, limit: 20 });
+        if (debouncedSearch) params.set("q", debouncedSearch);
 
-      const res = await fetch(`/api/admin/users?${params}`);
-      const data = await res.json();
+        const res = await fetch(`/api/admin/users?${params}`);
+        const data = await res.json();
 
-      setUsers(data.users || []);
-      setTotal(data.total || 0);
-      setTotalPages(data.totalPages || 1);
-    } catch {
-      toast.error("Failed to load users");
-    } finally {
-      setLoading(false);
-    }
-  };
+        setUsers(data.users || []);
+        setTotal(data.total || 0);
+        setTotalPages(data.totalPages || 1);
+      } catch {
+        toast.error("Failed to load users");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  fetchUsers();
-}, [page, debouncedSearch]);
+    fetchUsers();
+  }, [page, debouncedSearch]);
 
   function handleUserUpdate(updatedUser) {
     setUsers((prev) =>
@@ -142,7 +142,8 @@ useEffect(() => {
                 </th>
               </tr>
             </thead>
-            <tbody>
+            {/* Added pb-12 to create space for the dropdown on the last row */}
+            <tbody className="pb-12"> 
               {loading ? (
                 [...Array(8)].map((_, i) => (
                   <tr key={i} className="border-b border-gray-100">
@@ -175,7 +176,7 @@ useEffect(() => {
           </table>
         </div>
 
-        {/* Pagination */}
+        {/* Pagination */} 
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
             <p className="text-xs text-gray-500">
