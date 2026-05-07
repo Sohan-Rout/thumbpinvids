@@ -11,99 +11,260 @@ import {
   Home,
   ShoppingBag,
   X,
-  AlertTriangle,
   Search,
+  Grid3x3,
+  Calendar,
+  Image as ImageIcon2,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle
 } from "lucide-react";
 
-function AvatarCard({ avatar, onDelete }) {
-  const [deleting, setDeleting] = useState(false);
-
-  async function handleDelete() {
-    setDeleting(true);
-    try {
-      const res = await fetch("/api/admin/avatars", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: avatar.type, filename: avatar.filename }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Delete failed");
-      toast.success(`Deleted ${avatar.filename}`);
-      onDelete(avatar.id);
-    } catch (err) {
-      console.error("Delete error:", err);
-      toast.error(err.message || "Failed to delete avatar");
-      setDeleting(false);
-    }
-  }
-
+// Collection Card Component
+function CollectionCard({ collection, onClick }) {
   return (
-    <div className="group relative bg-white border border-gray-200 rounded-xl overflow-hidden hover:border-gray-400 transition-all duration-200 shadow-sm">
-      {/* Image */}
+    <div 
+      onClick={() => onClick(collection.id)}
+      className="group cursor-pointer bg-white border border-gray-200 rounded-xl overflow-hidden hover:border-gray-400 hover:shadow-lg transition-all duration-200"
+    >
+      {/* Single Image */}
       <div className="aspect-square bg-gray-100 relative overflow-hidden">
         <img
-          src={avatar.url}
-          alt={avatar.displayName}
+          src={collection.coverImage}
+          alt={collection.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           onError={(e) => {
-            e.target.style.display = "none";
+            e.target.src = "https://placehold.co/400x400?text=No+Image";
           }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-gray-900/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+        {/* Optional: Show number of images badge */}
+        {collection.fileCount > 1 && (
+          <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full">
+            +{collection.fileCount}
+          </div>
+        )}
       </div>
 
-      {/* Footer */}
-      <div className="p-3 flex items-center justify-between">
-        <p className="text-xs text-gray-600 font-medium truncate max-w-[120px]">
-          {avatar.filename}
+      {/* Collection Name */}
+      <div className="p-3">
+        <h3 className="font-medium text-gray-900 text-sm truncate text-center">
+          {collection.name}
+        </h3>
+        <p className="text-xs text-gray-500 text-center mt-1">
+          {collection.fileCount} image{collection.fileCount !== 1 ? 's' : ''}
         </p>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="p-1.5 rounded-lg text-xs font-medium transition-all text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Delete"
-        >
-          {deleting ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Trash2 className="w-3.5 h-3.5" />
-          )}
-        </button>
       </div>
     </div>
   );
 }
 
+// Collection View Modal
+function CollectionViewModal({ collection, onClose, onDelete }) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+
+  // Safety check
+  if (!collection || !collection.files || collection.files.length === 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+        <div className="relative bg-white rounded-2xl w-full max-w-md p-6 shadow-xl">
+          <div className="text-center">
+            <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Invalid Collection</h3>
+            <p className="text-gray-600 mb-4">This collection has no images or is corrupted.</p>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  async function handleDeleteCollection() {
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/admin/avatars", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          collectionId: collection.id,
+          type: collection.type 
+        }),
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      
+      toast.success(`Deleted collection "${collection.name}"`);
+      onDelete(collection.id);
+      onClose();
+    } catch (err) {
+      toast.error("Failed to delete collection");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function nextImage() {
+    setCurrentIndex((prev) => (prev + 1) % collection.files.length);
+  }
+
+  function prevImage() {
+    setCurrentIndex((prev) => (prev - 1 + collection.files.length) % collection.files.length);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">{collection.name}</h2>
+            <p className="text-sm text-gray-500">
+              {collection.fileCount} images • {collection.type === 'product' ? 'Product Video' : 'Real Estate'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDeleteCollection}
+              disabled={deleting}
+              className="p-2 text-gray-400 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
+              title="Delete Collection"
+            >
+              {deleting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+            </button>
+            <button 
+              onClick={onClose} 
+              className="p-2 text-gray-400 hover:text-gray-900 rounded-lg hover:bg-gray-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Image Gallery */}
+        <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
+          {/* Main Image with Navigation */}
+          <div className="relative mb-6">
+            {collection.files.length > 1 && (
+              <>
+                <button
+                  onClick={prevImage}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all z-10"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                
+                <button
+                  onClick={nextImage}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all z-10"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </>
+            )}
+            
+            <img
+              src={collection.files[currentIndex]?.url}
+              alt={`Image ${currentIndex + 1}`}
+              className="w-full h-auto max-h-[60vh] object-contain rounded-lg bg-gray-100"
+              onError={(e) => {
+                e.target.src = "https://placehold.co/800x600?text=Image+Not+Found";
+              }}
+            />
+            
+            {/* Image Counter */}
+            {collection.files.length > 1 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-2 py-1 rounded-full">
+                {currentIndex + 1} / {collection.files.length}
+              </div>
+            )}
+          </div>
+
+          {/* Thumbnails */}
+          {collection.files.length > 1 && (
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+              {collection.files.map((file, idx) => (
+                <button
+                  key={file.id || idx}
+                  onClick={() => setCurrentIndex(idx)}
+                  className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                    currentIndex === idx 
+                      ? "border-gray-900 ring-2 ring-gray-900/20" 
+                      : "border-gray-200 hover:border-gray-400"
+                  }`}
+                >
+                  <img
+                    src={file.url}
+                    alt={`Thumbnail ${idx + 1}`}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.src = "https://placehold.co/100x100?text=Error";
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Upload Modal
 function UploadModal({ onClose, onUploaded }) {
   const [type, setType] = useState("product");
-  const [file, setFile] = useState(null);
-  const [customName, setCustomName] = useState("");
+  const [files, setFiles] = useState([]);
+  const [collectionName, setCollectionName] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [preview, setPreview] = useState(null);
+  const [previews, setPreviews] = useState([]);
   const fileRef = useRef();
 
-  function handleFile(f) {
-    if (!f) return;
-    setFile(f);
-    const url = URL.createObjectURL(f);
-    setPreview(url);
+  function handleFiles(selectedFiles) {
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    
+    const filesArray = Array.from(selectedFiles);
+    setFiles(filesArray);
+    
+    const previewUrls = filesArray.map(file => URL.createObjectURL(file));
+    setPreviews(previewUrls);
+  }
+
+  function removeFile(index) {
+    URL.revokeObjectURL(previews[index]);
+    setFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => prev.filter((_, i) => i !== index));
   }
 
   async function handleUpload(e) {
     e.preventDefault();
-    if (!file) return toast.error("Select a file first");
+    if (files.length === 0) return toast.error("Select at least one file");
 
     setUploading(true);
     const fd = new FormData();
-    fd.append("file", file);
+    
+    files.forEach(file => {
+      fd.append("files", file);
+    });
     fd.append("type", type);
-    if (customName) fd.append("name", customName);
+    if (collectionName) fd.append("name", collectionName);
 
     try {
-      const res = await fetch("/api/admin/avatars/upload", { method: "POST", body: fd });
+      const res = await fetch("/api/admin/avatars/upload", { 
+        method: "POST", 
+        body: fd 
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast.success(`Uploaded ${data.filename}`);
+      
+      toast.success(`Created collection "${data.collection.name}" with ${data.collection.fileCount} images`);
       onUploaded();
       onClose();
     } catch (err) {
@@ -113,22 +274,29 @@ function UploadModal({ onClose, onUploaded }) {
     }
   }
 
+  // Cleanup previews on unmount
+  useEffect(() => {
+    return () => {
+      previews.forEach(preview => URL.revokeObjectURL(preview));
+    };
+  }, [previews]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white border border-gray-200 rounded-2xl w-full max-w-md p-6 shadow-xl animate-scale-in">
+      <div className="relative bg-white rounded-2xl w-full max-w-md p-6 shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
-          <h3 className="text-gray-900 font-semibold text-base font-heading">Upload Avatar</h3>
+          <h3 className="text-gray-900 font-semibold text-lg">Create New Collection</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-900">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <form onSubmit={handleUpload} className="space-y-4">
-          {/* Type */}
+          {/* Type selector */}
           <div>
             <label className="text-xs font-medium text-gray-500 mb-2 block">
-              Avatar Type
+              Collection Type
             </label>
             <div className="grid grid-cols-2 gap-2">
               {[
@@ -139,10 +307,10 @@ function UploadModal({ onClose, onUploaded }) {
                   key={val}
                   type="button"
                   onClick={() => setType(val)}
-                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
+                  className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
                     type === val
                       ? "bg-gray-900 text-white border-gray-900"
-                      : "border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -152,68 +320,97 @@ function UploadModal({ onClose, onUploaded }) {
             </div>
           </div>
 
-          {/* File Drop Zone */}
+          {/* File upload */}
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-2 block">Image File</label>
+            <label className="text-xs font-medium text-gray-500 mb-2 block">
+              Images (multiple allowed)
+            </label>
             <div
               onClick={() => fileRef.current?.click()}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                handleFile(e.dataTransfer.files[0]);
+                handleFiles(e.dataTransfer.files);
               }}
-              className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center cursor-pointer hover:border-gray-400 bg-gray-50/50 transition-all"
+              className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center cursor-pointer hover:border-gray-400 transition-all"
             >
-              {preview ? (
-                <img src={preview} alt="preview" className="h-28 mx-auto rounded-lg object-cover" />
+              {previews.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {previews.slice(0, 3).map((preview, idx) => (
+                    <img key={idx} src={preview} className="h-20 w-full object-cover rounded-lg" alt="Preview" />
+                  ))}
+                  {previews.length > 3 && (
+                    <div className="h-20 rounded-lg bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                      +{previews.length - 3}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="flex flex-col items-center gap-2 text-gray-400">
                   <Upload className="w-8 h-8" />
-                  <p className="text-sm">Click or drag & drop image here</p>
-                  <p className="text-xs">PNG, JPG, WEBP supported</p>
+                  <p className="text-sm">Click or drag & drop images here</p>
+                  <p className="text-xs">PNG, JPG, WEBP | Multiple files allowed</p>
                 </div>
               )}
               <input
                 ref={fileRef}
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
+                multiple
                 className="hidden"
-                onChange={(e) => handleFile(e.target.files[0])}
+                onChange={(e) => handleFiles(e.target.files)}
               />
             </div>
-            {file && (
-              <p className="text-xs text-gray-500 mt-1">{file.name} ({(file.size / 1024).toFixed(0)} KB)</p>
+            
+            {files.length > 0 && (
+              <div className="mt-3 space-y-1 max-h-32 overflow-y-auto">
+                {files.map((file, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs p-2 bg-gray-50 rounded-lg">
+                    <span className="text-gray-600 truncate flex-1">{file.name}</span>
+                    <span className="text-gray-400 ml-2">({(file.size / 1024).toFixed(0)} KB)</span>
+                    {!uploading && (
+                      <button 
+                        type="button" 
+                        onClick={() => removeFile(idx)} 
+                        className="ml-2 text-gray-400 hover:text-red-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
-          {/* Custom Name */}
+          {/* Collection Name */}
           <div>
             <label className="text-xs font-medium text-gray-500 mb-2 block">
-              Custom Name <span className="text-gray-400">(optional)</span>
+              Collection Name <span className="text-gray-400">(optional)</span>
             </label>
             <input
               type="text"
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              placeholder="e.g. avatar9"
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              placeholder="e.g., Summer Collection 2024"
               className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900 transition-all"
             />
           </div>
 
           <button
             type="submit"
-            disabled={uploading || !file}
+            disabled={uploading || files.length === 0}
             className="w-full bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-xl text-sm transition-all"
           >
             {uploading ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Uploading...
+                Creating collection...
               </span>
             ) : (
               <span className="flex items-center justify-center gap-2">
-                <Upload className="w-4 h-4" />
-                Upload Avatar
+                <Plus className="w-4 h-4" />
+                Create Collection ({files.length} image{files.length !== 1 ? 's' : ''})
               </span>
             )}
           </button>
@@ -223,94 +420,97 @@ function UploadModal({ onClose, onUploaded }) {
   );
 }
 
+// Main Page
 export default function AdminAvatarsPage() {
-  const [data, setData] = useState({ product: [], realEstate: [] });
+  const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
-  const [activeTab, setActiveTab] = useState("product");
+  const [activeTab, setActiveTab] = useState("all");
   const [search, setSearch] = useState("");
+  const [selectedCollection, setSelectedCollection] = useState(null);
 
-  async function loadAvatars() {
+  async function loadCollections() {
     setLoading(true);
     try {
+      // Always fetch all collections first
       const res = await fetch("/api/admin/avatars");
-      const json = await res.json();
-      setData({ product: json.product || [], realEstate: json.realEstate || [] });
+      const data = await res.json();
+      let allCollections = data.collections || [];
+      
+      // Filter on frontend based on active tab
+      if (activeTab !== "all") {
+        allCollections = allCollections.filter(c => c.type === activeTab);
+      }
+      
+      console.log("Loaded collections:", allCollections);
+      setCollections(allCollections);
     } catch (err) {
-      toast.error("Failed to load avatars");
+      console.error("Failed to load collections:", err);
+      toast.error("Failed to load collections");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    const abortController = new AbortController();
+    loadCollections();
+  }, [activeTab]);
 
-    async function loadAvatarsWithAbort() {
-      setLoading(true);
-      try {
-        const res = await fetch("/api/admin/avatars", { signal: abortController.signal });
-        const json = await res.json();
-        if (!abortController.signal.aborted) {
-          setData({ product: json.product || [], realEstate: json.realEstate || [] });
-        }
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          toast.error("Failed to load avatars");
-        }
-      } finally {
-        if (!abortController.signal.aborted) {
-          setLoading(false);
-        }
+  async function fetchFullCollection(collectionId) {
+    try {
+      const res = await fetch(`/api/admin/avatars?collectionId=${collectionId}`);
+      const data = await res.json();
+      if (data.collection) {
+        setSelectedCollection(data.collection);
+      } else {
+        toast.error("Failed to load collection details");
       }
+    } catch (err) {
+      console.error("Error fetching collection:", err);
+      toast.error("Failed to load collection details");
     }
-
-    loadAvatarsWithAbort();
-
-    return () => abortController.abort();
-  }, []);
-
-  function handleDeleted(id) {
-    setData((prev) => ({
-      product: prev.product.filter((a) => a.id !== id),
-      realEstate: prev.realEstate.filter((a) => a.id !== id),
-    }));
   }
 
-  const list = activeTab === "product" ? data.product : data.realEstate;
-  const filtered = list.filter((a) =>
-    a.filename.toLowerCase().includes(search.toLowerCase())
-  );
+  function handleDeleteCollection(collectionId) {
+    setCollections(prev => prev.filter(c => c.id !== collectionId));
+  }
+
+  // Filter collections by search
+  const filtered = search
+    ? collections.filter(c => 
+        c.name.toLowerCase().includes(search.toLowerCase())
+      )
+    : collections;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+    <div className="max-w-6xl mx-auto space-y-6 p-4">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 font-heading tracking-tight">
-            Avatar Manager
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+            Avatar Collections
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Manage product video & real estate avatars
+            Manage product video & real estate avatar collections
           </p>
         </div>
         <button
           onClick={() => setShowUpload(true)}
-          id="admin-upload-avatar"
           className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm"
         >
           <Plus className="w-4 h-4" />
-          Upload Avatar
+          New Collection
         </button>
       </div>
 
       {/* Tabs + Search */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex bg-white border border-gray-200 rounded-xl p-1 gap-1 shadow-sm">
           {[
-            { key: "product", label: "Product Video", icon: ShoppingBag, count: data.product.length },
-            { key: "real-estate", label: "Real Estate", icon: Home, count: data.realEstate.length },
-          ].map(({ key, label, icon: Icon, count }) => (
+            { key: "all", label: "All Collections", icon: Grid3x3 },
+            { key: "product", label: "Product Video", icon: ShoppingBag },
+            { key: "real-estate", label: "Real Estate", icon: Home },
+          ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setActiveTab(key)}
@@ -322,11 +522,6 @@ export default function AdminAvatarsPage() {
             >
               <Icon className="w-4 h-4" />
               {label}
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                activeTab === key ? "bg-white text-gray-600 shadow-sm border border-gray-100" : "bg-gray-50 text-gray-400"
-              }`}>
-                {count}
-              </span>
             </button>
           ))}
         </div>
@@ -337,19 +532,22 @@ export default function AdminAvatarsPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search avatars..."
-            className="bg-white border border-gray-200 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-gray-900 transition-all w-56 shadow-sm"
+            placeholder="Search collections..."
+            className="bg-white border border-gray-200 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-gray-900 focus:ring-1 focus:ring-gray-900 transition-all w-56 shadow-sm"
           />
         </div>
       </div>
 
-      {/* Grid */}
+      {/* Collections Grid */}
       {loading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {[...Array(12)].map((_, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-              <div className="aspect-square bg-gray-100 animate-pulse" />
-              <div className="p-3 h-10 bg-white" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div className="aspect-video bg-gray-100 animate-pulse" />
+              <div className="p-4 space-y-2">
+                <div className="h-4 bg-gray-100 animate-pulse rounded w-3/4" />
+                <div className="h-3 bg-gray-100 animate-pulse rounded w-1/2" />
+              </div>
             </div>
           ))}
         </div>
@@ -357,25 +555,38 @@ export default function AdminAvatarsPage() {
         <div className="text-center py-20 border border-dashed border-gray-200 rounded-2xl bg-white">
           <ImageIcon className="w-10 h-10 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500 font-medium">
-            {search ? "No avatars match your search" : "No avatars yet"}
+            {search ? "No collections match your search" : `No ${activeTab === "all" ? "" : activeTab} collections yet`}
           </p>
           <p className="text-gray-400 text-sm mt-1">
-            {!search && "Upload your first avatar using the button above"}
+            {!search && "Create your first collection using the button above"}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {filtered.map((avatar) => (
-            <AvatarCard key={avatar.id} avatar={avatar} onDelete={handleDeleted} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filtered.map((collection) => (
+            <CollectionCard 
+              key={collection.id} 
+              collection={collection} 
+              onClick={fetchFullCollection}
+            />
           ))}
         </div>
+      )}
+
+      {/* Collection View Modal */}
+      {selectedCollection && (
+        <CollectionViewModal
+          collection={selectedCollection}
+          onClose={() => setSelectedCollection(null)}
+          onDelete={handleDeleteCollection}
+        />
       )}
 
       {/* Upload Modal */}
       {showUpload && (
         <UploadModal
           onClose={() => setShowUpload(false)}
-          onUploaded={loadAvatars}
+          onUploaded={loadCollections}
         />
       )}
     </div>
