@@ -1,5 +1,16 @@
 "use client";
-import { useState, Suspense, useEffect } from "react";
+
+import { 
+  saveSessionProgress, 
+  loadSessionProgress, 
+  autoSaveProgress,
+  getActiveSessions,
+  deleteSession,
+  saveImagesToDB,
+  saveCompositesToDB,
+  saveScriptsToDB
+} from "../../../utils/indexedDB"
+import { useState, Suspense, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +45,41 @@ import MultiImageUploadBox from "@/modules/ai-walkthrough/components/MultiImageU
 import VideoCard from "@/modules/ai-walkthrough/components/VideoCard";
 import dataUrlToFile from "@/modules/ai-walkthrough/helpers/dataUrlToFile";
 import compressImage from "@/modules/ai-walkthrough/helpers/compressImage";
+
+// Add this helper function near the top of your page component
+const ensureFileObject = async (input) => {
+  if (!input) return null;
+  
+  // Already a File object
+  if (input instanceof File) return input;
+  
+  // Array of files
+  if (Array.isArray(input)) {
+    return Promise.all(input.map(item => ensureFileObject(item)));
+  }
+  
+  // URL string
+  if (typeof input === 'string') {
+    if (input.startsWith('data:')) {
+      return dataUrlToFile(input, 'image.png');
+    }
+    try {
+      const response = await fetch(input);
+      const blob = await response.blob();
+      return new File([blob], 'image.jpg', { type: blob.type });
+    } catch (err) {
+      console.error('Failed to fetch URL:', err);
+      return null;
+    }
+  }
+  
+  // Object with url property
+  if (input.url && typeof input.url === 'string') {
+    return ensureFileObject(input.url);
+  }
+  
+  return input;
+};
 
 const MAX_SCRIPT = 200;
 
@@ -95,18 +141,51 @@ const FURNISHING_OPTIONS = ["Unfurnished", "Semi-Furnished", "Fully Furnished"];
 const FACING_OPTIONS = ["North", "South", "East", "West", "NE", "NW", "SE", "SW"];
 const FLOOR_OPTIONS = ["Ground", "1-5", "6-10", "11-20", "20+", "Top Floor", "Duplex"];
 
-const STORAGE_KEY = "re_walkthrough_state";
-
-
+const STORAGE_KEY = 're_video_session';
+const MAX_RETRY_ATTEMPTS = 3;
 
 // ─── Main 3-Step Page ────────────────────────────────────────────────────────
 const STEPS = ["Upload & Avatar", "Pick Composite", "Script & Generate"];
+
+// Helper to safely access localStorage (client-side only)
+const safeLocalStorage = {
+  getItem: (key) => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(key);
+    }
+    return null;
+  },
+  setItem: (key, value) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(key, value);
+    }
+  },
+  removeItem: (key) => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(key);
+    }
+  }
+};
 
 function RealEstateVideoContent() {
   const searchParams = useSearchParams();
   const initialScript = searchParams.get("script");
 
   const [step, setStep] = useState(0);
+  const [sessionId, setSessionId] = useState(null);
+  const [isClient, setIsClient] = useState(false);
+
+  // Add session metadata
+  const [sessionMetadata, setSessionMetadata] = useState({
+    createdAt: Date.now(),
+    lastSaved: Date.now(),
+    completedSteps: []
+  });
+
+  // Retry state
+  const [retryingVideos, setRetryingVideos] = useState(new Set());
+  const [videoRetryAttempts, setVideoRetryAttempts] = useState({});
+  const generationLock = useRef(false);
 
   // Step 0: Property images + Avatar (combined)
   const [propertyImages, setPropertyImages] = useState([]);
@@ -117,21 +196,21 @@ function RealEstateVideoContent() {
   const [avatarVariantCount, setAvatarVariantCount] = useState(1);
   const [generatedAvatars, setGeneratedAvatars] = useState([]);
   const [generatingAvatar, setGeneratingAvatar] = useState(false);
-  const [lightboxUrl, setLightboxUrl] = useState(null); // avatar expand lightbox
+  const [lightboxUrl, setLightboxUrl] = useState(null);
 
-  // ── R2 Real-estate avatars (fetched live, reflects admin deletes in real-time) ──
+  // ── R2 Real-estate avatars ──
   const [reAvatars, setReAvatars] = useState([]);
   const [reAvatarsLoading, setReAvatarsLoading] = useState(false);
   const [reAvatarsError, setReAvatarsError] = useState(null);
   const [propertyDrawerOpen, setPropertyDrawerOpen] = useState(false);
 
-  // Step 1: Composites (multi-select)
+  // Step 1: Composites
   const [composites, setComposites] = useState([]);
   const [generatingComposites, setGeneratingComposites] = useState(false);
   const [selectedCompositeIndices, setSelectedCompositeIndices] = useState(new Set());
   const [savingComposites, setSavingComposites] = useState(false);
 
-  // Property brief (interactive questionnaire — moved to step 0)
+  // Property brief
   const [propertyBrief, setPropertyBrief] = useState({
     location: "", propertyType: "", price: "", priceRange: "",
     bedrooms: 2, bathrooms: 2, area: "",
@@ -140,12 +219,11 @@ function RealEstateVideoContent() {
     keyFeatures: "", amenities: "",
   });
 
-  // Step 2: Script + Generate (voice is backend-only)
+  // Step 2: Script + Generate
   const [script, setScript] = useState("");
-  const [batchScripts, setBatchScripts] = useState([]); // legacy plain strings (single mode fallback)
-  // Structured scripts: [{ hook, walkthrough, cta, fullScript }]
+  const [batchScripts, setBatchScripts] = useState([]);
   const [structuredScripts, setStructuredScripts] = useState([]);
-  const [sharedVoicePrompt, setSharedVoicePrompt] = useState(""); // captured from video 0, reused for all
+  const [sharedVoicePrompt, setSharedVoicePrompt] = useState("");
   const [language, setLanguage] = useState("english");
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
@@ -157,12 +235,153 @@ function RealEstateVideoContent() {
   // Combine state
   const [combining, setCombining] = useState(false);
   const [combineProgress, setCombineProgress] = useState("");
-  const [combinedVideo, setCombinedVideo] = useState(null); // { blobUrl, serverUrl }
+  const [combinedVideo, setCombinedVideo] = useState(null);
 
-  // ── Restore state from localStorage ──────────────────────────────────────
+  // Initialize session ID only on client
   useEffect(() => {
+    setIsClient(true);
+    const saved = safeLocalStorage.getItem('currentSessionId');
+    setSessionId(saved || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+  }, []);
+
+  // Load session on mount (client-side only)
+  useEffect(() => {
+    if (!sessionId || !isClient) return;
+    
+    const loadSession = async () => {
+      try {
+        const savedData = await loadSessionProgress(sessionId);
+        
+        if (savedData.propertyBrief) {
+          const isRecent = (Date.now() - savedData.propertyBrief.lastUpdated) < 24 * 60 * 60 * 1000;
+          
+          if (isRecent) {
+            if (savedData.propertyBrief) {
+              setPropertyBrief(savedData.propertyBrief);
+            }
+            
+            if (savedData.avatarData) {
+              setAvatarMode(savedData.avatarData.avatarMode);
+              setSelectedAvatar(savedData.avatarData.selectedAvatar);
+              setAvatarPrompt(savedData.avatarData.avatarPrompt || '');
+              setAvatarVariantCount(savedData.avatarData.avatarVariantCount || 1);
+            }
+            
+            if (savedData.images && savedData.images.length > 0) {
+              setPropertyImages(savedData.images);
+            }
+            
+            const savedComposites = safeLocalStorage.getItem(`${sessionId}_composites`);
+            if (savedComposites) {
+              const parsed = JSON.parse(savedComposites);
+              setComposites(parsed);
+            }
+            
+            const savedSelected = safeLocalStorage.getItem(`${sessionId}_selected`);
+            if (savedSelected) {
+              const indices = JSON.parse(savedSelected);
+              setSelectedCompositeIndices(new Set(indices));
+            }
+            
+            const savedScripts = safeLocalStorage.getItem(`${sessionId}_scripts`);
+            if (savedScripts) {
+              const scripts = JSON.parse(savedScripts);
+              setStructuredScripts(scripts);
+              setBatchScripts(scripts.map(s => s.fullScript || ""));
+            }
+            
+            const savedStep = safeLocalStorage.getItem(`${sessionId}_step`);
+            if (savedStep) {
+              setStep(parseInt(savedStep));
+            }
+            
+            toast.success('Session restored!');
+          }
+        }
+        
+        const raw = safeLocalStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s.step !== undefined) setStep(s.step);
+          if (s.language) setLanguage(s.language);
+          if (s.scriptTone) setScriptTone(s.scriptTone);
+          if (typeof s.allowEmotionTags === "boolean") setAllowEmotionTags(s.allowEmotionTags);
+          if (s.propertyBrief) setPropertyBrief(s.propertyBrief);
+          if (s.script) setScript(s.script);
+          if (s.avatarMode) setAvatarMode(s.avatarMode);
+        }
+      } catch (error) {
+        console.error('Failed to load session:', error);
+      }
+    };
+    
+    loadSession();
+  }, [sessionId, isClient]);
+
+  // Save session on changes (client-side only)
+  useEffect(() => {
+    if (!sessionId || !isClient) return;
+    
+    const saveSession = async () => {
+      try {
+        await saveSessionProgress({
+          sessionId,
+          step,
+          propertyBrief,
+          avatarMode,
+          selectedAvatar,
+          avatarPrompt,
+          avatarVariantCount,
+          metadata: {
+            lastEdited: Date.now(),
+            propertyImagesCount: propertyImages.length,
+            compositesCount: composites.length,
+            selectedCount: selectedCompositeIndices.size
+          }
+        });
+        
+        if (propertyImages.length > 0) {
+          await saveImagesToDB(sessionId, propertyImages);
+        }
+        
+        safeLocalStorage.setItem('currentSessionId', sessionId);
+        safeLocalStorage.setItem(`${sessionId}_step`, step.toString());
+        
+        if (composites.length > 0) {
+          safeLocalStorage.setItem(`${sessionId}_composites`, JSON.stringify(composites));
+        }
+        
+        if (selectedCompositeIndices.size > 0) {
+          safeLocalStorage.setItem(`${sessionId}_selected`, JSON.stringify([...selectedCompositeIndices]));
+        }
+        
+        if (structuredScripts.length > 0) {
+          safeLocalStorage.setItem(`${sessionId}_scripts`, JSON.stringify(structuredScripts));
+        }
+        
+        setSessionMetadata(prev => ({ ...prev, lastSaved: Date.now() }));
+      } catch (error) {
+        console.error('Save failed:', error);
+      }
+    };
+    
+    const timeoutId = setTimeout(saveSession, 2000);
+    return () => clearTimeout(timeoutId);
+  }, [propertyBrief, propertyImages, composites, selectedCompositeIndices, structuredScripts, step, avatarMode, selectedAvatar, avatarPrompt, avatarVariantCount, sessionId, isClient]);
+
+  // Save when generating composites
+  useEffect(() => {
+    if (!sessionId || !isClient) return;
+    if (composites.length > 0 && !generatingComposites) {
+      safeLocalStorage.setItem(`${sessionId}_composites`, JSON.stringify(composites));
+    }
+  }, [composites, generatingComposites, sessionId, isClient]);
+
+  // Restore state from localStorage
+  useEffect(() => {
+    if (!isClient) return;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = safeLocalStorage.getItem(STORAGE_KEY);
       if (raw) {
         const s = JSON.parse(raw);
         if (s.step !== undefined) setStep(s.step);
@@ -175,9 +394,9 @@ function RealEstateVideoContent() {
       }
     } catch {}
     if (initialScript) { setScript(initialScript); setStep(2); }
-  }, [initialScript]);
+  }, [initialScript, isClient]);
 
-  // ── Fetch RE avatars from R2 on mount (and when avatarMode switches to prebuilt) ──
+  // Fetch RE avatars
   useEffect(() => {
     if (avatarMode !== "prebuilt") return;
     let cancelled = false;
@@ -188,7 +407,6 @@ function RealEstateVideoContent() {
       .then((data) => {
         if (cancelled) return;
         setReAvatars(data.avatars ?? []);
-        // If the previously selected avatar is no longer in R2, deselect it
         if (selectedAvatar) {
           const stillExists = (data.avatars ?? []).some((a) => a.url === selectedAvatar.url);
           if (!stillExists) setSelectedAvatar(null);
@@ -201,23 +419,21 @@ function RealEstateVideoContent() {
       })
       .finally(() => { if (!cancelled) setReAvatarsLoading(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avatarMode]);
 
-
-  // ── Persist state to localStorage on change ───────────────────────────────
+  // Persist state to localStorage
   useEffect(() => {
+    if (!isClient) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      safeLocalStorage.setItem(STORAGE_KEY, JSON.stringify({
         step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode,
       }));
     } catch {}
-  }, [step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode]);
+  }, [step, language, scriptTone, allowEmotionTags, propertyBrief, script, avatarMode, isClient]);
 
   const selectedCompositeArray = [...selectedCompositeIndices].sort().map((i) => composites[i]).filter(Boolean);
   const isBatchMode = selectedCompositeIndices.size > 1;
 
-  // Toggle composite selection
   function toggleComposite(i) {
     setSelectedCompositeIndices((prev) => {
       const next = new Set(prev);
@@ -226,27 +442,24 @@ function RealEstateVideoContent() {
       return next;
     });
   }
+  
   function selectAllComposites() {
     if (selectedCompositeIndices.size === composites.length) setSelectedCompositeIndices(new Set());
     else setSelectedCompositeIndices(new Set(composites.map((_, i) => i)));
   }
 
-  // Batch credit calculation
   const batchSize = selectedCompositeIndices.size;
   const perVideoCost = 3;
   const totalFullPrice = batchSize * perVideoCost;
   const discountedTotal = batchSize <= 1 ? perVideoCost : batchSize === 2 ? 5 : Math.round(batchSize * perVideoCost * 0.75);
   const savings = totalFullPrice - discountedTotal;
 
-  // Validity
   const step0Valid = propertyImages.length >= 1 && !!selectedAvatar;
   const step1Valid = selectedCompositeIndices.size >= 1;
-  // In batch mode, validate using structuredScripts.fullScript (falls back to batchScripts if structured not yet set)
   const step2Valid = isBatchMode
     ? structuredScripts.length === batchSize && structuredScripts.every((s) => (s.fullScript || "").trim().length >= 15)
     : script.trim().length >= 15;
 
-  // ── Avatar generation ──────────────────────────────────────────────────────
   async function handleGenerateAvatars() {
     if (!avatarPrompt.trim() || avatarPrompt.trim().length < 10) return;
     setGeneratingAvatar(true);
@@ -268,54 +481,65 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Generate composites ────────────────────────────────────────────────────
   async function handleGenerateComposites() {
-    if (!selectedAvatar || propertyImages.length === 0) return;
-    setGeneratingComposites(true);
-    setComposites([]);
-    setSelectedCompositeIndices(new Set());
-    setBatchScripts([]);
-    try {
-      let avatarFile;
-      if (selectedAvatar.file) {
-        avatarFile = await compressImage(selectedAvatar.file);
-      } else {
-        const res = await fetch(selectedAvatar.url);
-        const blob = await res.blob();
-        avatarFile = await compressImage(new File([blob], "avatar.png", { type: blob.type }));
-      }
-
-      const results = [];
-      for (let i = 0; i < propertyImages.length; i++) {
-        toast.info(`Creating composite ${i + 1}/${propertyImages.length}...`, { id: "composite-progress" });
-        const compressedProperty = await compressImage(propertyImages[i]);
-        const fd = new FormData();
-        fd.append("avatarImage", avatarFile);
-        fd.append("propertyImage", compressedProperty);
-
-        const res = await fetch("/api/real-estate-video/composite", { method: "POST", body: fd });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `Composite ${i + 1} failed`);
-
-        results.push({
-          url: data.compositeUrl,
-          file: dataUrlToFile(data.compositeUrl, `re-composite-${i}.png`),
-          title: `Property ${i + 1}`,
-          propertyIndex: i,
-        });
-      }
-
-      setComposites(results);
-      toast.success(`${results.length} composite(s) ready — select your favorites!`, { id: "composite-progress" });
-      if (results.length === 1) setSelectedCompositeIndices(new Set([0]));
-    } catch (err) {
-      toast.error("Composite generation failed", { description: err.message });
-    } finally {
-      setGeneratingComposites(false);
+  if (!selectedAvatar || propertyImages.length === 0) return;
+  setGeneratingComposites(true);
+  setComposites([]);
+  setSelectedCompositeIndices(new Set());
+  setBatchScripts([]);
+  try {
+    // Ensure avatar is a proper file
+    let avatarFile;
+    if (selectedAvatar.file) {
+      avatarFile = await ensureFileObject(selectedAvatar.file);
+      avatarFile = await compressImage(avatarFile);
+    } else if (selectedAvatar.url) {
+      avatarFile = await ensureFileObject(selectedAvatar.url);
+      avatarFile = await compressImage(avatarFile);
     }
-  }
+    
+    if (!avatarFile) {
+      throw new Error('Failed to process avatar image');
+    }
 
-  // ── Save unused composites to Asset Library ────────────────────────────────
+    const results = [];
+    for (let i = 0; i < propertyImages.length; i++) {
+      toast.info(`Creating composite ${i + 1}/${propertyImages.length}...`, { id: "composite-progress" });
+      
+      // Ensure property image is a proper file
+      let propertyFile = await ensureFileObject(propertyImages[i]);
+      if (!propertyFile) {
+        throw new Error(`Failed to process property image ${i + 1}`);
+      }
+      
+      const compressedProperty = await compressImage(propertyFile);
+      const fd = new FormData();
+      fd.append("avatarImage", avatarFile);
+      fd.append("propertyImage", compressedProperty);
+
+      const res = await fetch("/api/real-estate-video/composite", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Composite ${i + 1} failed`);
+
+      results.push({
+        url: data.compositeUrl,
+        file: dataUrlToFile(data.compositeUrl, `re-composite-${i}.png`),
+        title: `Property ${i + 1}`,
+        propertyIndex: i,
+      });
+    }
+
+    setComposites(results);
+    toast.success(`${results.length} composite(s) ready — select your favorites!`, { id: "composite-progress" });
+    if (results.length === 1) setSelectedCompositeIndices(new Set([0]));
+  } catch (err) {
+    console.error('Composite generation error:', err);
+    toast.error("Composite generation failed", { description: err.message });
+  } finally {
+    setGeneratingComposites(false);
+  }
+}
+
   async function saveUnusedComposites() {
     const unselected = composites.filter((_, i) => !selectedCompositeIndices.has(i));
     if (unselected.length === 0) return;
@@ -341,18 +565,15 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Proceed from composite pick → script (auto-generate in batch mode) ──────
   async function handleCompositeNext() {
     if (selectedCompositeIndices.size === 0) return;
-    saveUnusedComposites(); // background
+    saveUnusedComposites();
     setStep(2);
-    // Auto-generate structured scripts in batch mode when entering Step 2
     if (selectedCompositeIndices.size > 1) {
       setTimeout(() => handleGenerateScript(), 100);
     }
   }
 
-  // ── Script generation (single + batch) ─────────────────────────────────────
   async function handleGenerateScript() {
     if (selectedCompositeArray.length === 0) return;
     setGeneratingScript(true);
@@ -370,7 +591,6 @@ function RealEstateVideoContent() {
 
       if (isBatchMode) {
         fd.append("compositeCount", String(selectedCompositeArray.length));
-        // Shared user intent for batch (individual clip intents can be added later via userIntent_i)
         if (script.trim()) fd.append("userIntent", script.trim());
         for (let i = 0; i < selectedCompositeArray.length; i++) {
           fd.append(`compositeImage_${i}`, selectedCompositeArray[i].file);
@@ -380,21 +600,17 @@ function RealEstateVideoContent() {
         const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Script generation failed");
-        // data.scripts is now [{ hook, walkthrough, cta, fullScript }]
         setStructuredScripts(data.scripts || []);
-        // Keep legacy batchScripts in sync (fullScript strings) for any old consumers
         setBatchScripts((data.scripts || []).map((s) => s.fullScript || ""));
         toast.success(`${data.scripts?.length || 0} structured scripts generated!`);
       } else {
         fd.append("compositeImage", selectedCompositeArray[0].file);
-        // Pass whatever the user typed as their intent — AI will weave it into the cinematic prompt
         if (script.trim()) fd.append("userIntent", script.trim());
         const propIdx = selectedCompositeArray[0].propertyIndex ?? 0;
         if (propertyImages[propIdx]) fd.append("propertyImage", await compressImage(propertyImages[propIdx]));
         const res = await fetch("/api/real-estate-video/generate-script", { method: "POST", body: fd });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Script generation failed");
-        // data.script is { hook, walkthrough, cta, fullScript }
         if (data.script?.fullScript) {
           setScript(data.script.fullScript);
         } else if (typeof data.script === "string") {
@@ -409,73 +625,111 @@ function RealEstateVideoContent() {
     }
   }
 
-  // ── Single video generation via SSE (returns captured voice prompt) ──────────
   async function generateSingleVideo(composite, scriptText, videoIndex, providedVoicePrompt) {
-    const fd = new FormData();
-    fd.append("compositeImage", composite.file);
-    fd.append("script", scriptText.trim());
-    if (providedVoicePrompt) fd.append("sharedVoicePrompt", providedVoicePrompt);
-
-    const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || "Generation failed");
+  let compositeFile;
+  
+  // Handle different types of composite inputs
+  if (composite.file instanceof File) {
+    // It's already a File object
+    compositeFile = composite.file;
+  } else if (typeof composite.url === 'string' && composite.url.startsWith('data:')) {
+    // It's a data URL - convert to Blob/File
+    const blob = dataURLToBlob(composite.url);
+    compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: 'image/png' });
+  } else if (typeof composite.url === 'string') {
+    // It's a regular URL - fetch it
+    const response = await fetch(composite.url);
+    const blob = await response.blob();
+    compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: blob.type });
+  } else if (composite.file && typeof composite.file === 'string') {
+    // File property is a string (data URL or regular URL)
+    if (composite.file.startsWith('data:')) {
+      const blob = dataURLToBlob(composite.file);
+      compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: 'image/png' });
+    } else {
+      const response = await fetch(composite.file);
+      const blob = await response.blob();
+      compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: blob.type });
     }
-    if (!response.body) throw new Error("No response stream");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let capturedVoice = "";
-
-    while (true) {
-      const { value, done: streamDone } = await reader.read();
-      if (streamDone) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const event = JSON.parse(line.slice(6));
-          if (event.type === "progress") toast.info(event.message, { id: `video-gen-${videoIndex}` });
-          if (event.type === "voice_ready" && event.voicePrompt) {
-            capturedVoice = event.voicePrompt;
-            if (videoIndex === 0) setSharedVoicePrompt(event.voicePrompt);
-          }
-          if (event.type === "video_ready") {
-            setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "ready"; return n; });
-            setVideoResults((prev) => { const n = [...prev]; n[videoIndex] = { videoUrl: event.videoUrl }; return n; });
-            toast.success(`🏠 Video ${videoIndex + 1} ready!`, { id: `video-gen-${videoIndex}` });
-          }
-          if (event.type === "error") {
-            setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "error"; return n; });
-            toast.error(`Video ${videoIndex + 1} failed`, { description: event.message });
-          }
-        } catch {}
-      }
-    }
-    return capturedVoice;
+  } else {
+    throw new Error(`Invalid composite format for video ${videoIndex + 1}`);
   }
+  
+  const fd = new FormData();
+  fd.append("compositeImage", compositeFile);
+  fd.append("script", scriptText.trim());
+  if (providedVoicePrompt) fd.append("sharedVoicePrompt", providedVoicePrompt);
 
-  // ── Video generation (batch — sequential, shared voice) ─────────────────────
+  const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Generation failed");
+  }
+  if (!response.body) throw new Error("No response stream");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let capturedVoice = "";
+
+  while (true) {
+    const { value, done: streamDone } = await reader.read();
+    if (streamDone) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "progress") toast.info(event.message, { id: `video-gen-${videoIndex}` });
+        if (event.type === "voice_ready" && event.voicePrompt) {
+          capturedVoice = event.voicePrompt;
+          if (videoIndex === 0) setSharedVoicePrompt(event.voicePrompt);
+        }
+        if (event.type === "video_ready") {
+          setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "ready"; return n; });
+          setVideoResults((prev) => { const n = [...prev]; n[videoIndex] = { videoUrl: event.videoUrl }; return n; });
+          toast.success(`🏠 Video ${videoIndex + 1} ready!`, { id: `video-gen-${videoIndex}` });
+        }
+        if (event.type === "error") {
+          setVideoStatuses((prev) => { const n = [...prev]; n[videoIndex] = "error"; return n; });
+          toast.error(`Video ${videoIndex + 1} failed`, { description: event.message });
+        }
+      } catch (e) {}
+    }
+  }
+  return capturedVoice;
+}
+
+// Helper function to convert dataURL to Blob
+function dataURLToBlob(dataURL) {
+  const arr = dataURL.split(',');
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
+
   async function handleGenerateVideo() {
     const comps = selectedCompositeArray;
-    // Batch: derive spoken lines from structuredScripts; single: plain script
     const scripts = isBatchMode
       ? structuredScripts.map((s) => s.fullScript || "")
       : [script];
     if (comps.length === 0 || scripts.some((s) => !s?.trim())) return;
 
     setGenerating(true);
-    setSharedVoicePrompt(""); // reset before new batch
+    setSharedVoicePrompt("");
     setVideoStatuses(comps.map(() => "generating"));
     setVideoResults(comps.map(() => null));
 
     let capturedVoice = "";
     for (let i = 0; i < comps.length; i++) {
       try {
-        // Video 0 generates voice; all subsequent clips receive it
         const returned = await generateSingleVideo(comps[i], scripts[i], i, i > 0 ? capturedVoice : undefined);
         if (i === 0 && returned) capturedVoice = returned;
       } catch (err) {
@@ -487,7 +741,6 @@ function RealEstateVideoContent() {
     setGenerating(false);
   }
 
-  // ── Combine batch videos (client-side FFmpeg WASM) ─────────────────────────
   async function handleCombineVideos() {
     const readyUrls = videoResults.filter(Boolean).map((r) => r.videoUrl).filter(Boolean);
     if (readyUrls.length < 2) return;
@@ -505,7 +758,6 @@ function RealEstateVideoContent() {
       setCombinedVideo({ blobUrl, serverUrl: null });
       toast.success("Videos combined successfully!");
 
-      // Upload to server for permanent storage
       setCombineProgress("Uploading to server...");
       try {
         const { url } = await uploadCombinedVideo(blob);
@@ -524,6 +776,167 @@ function RealEstateVideoContent() {
     }
   }
 
+  const retryVideoGeneration = async (videoIndex) => {
+  const comps = selectedCompositeArray;
+  const scripts = isBatchMode
+    ? structuredScripts.map((s) => s.fullScript || "")
+    : [script];
+  
+  if (!comps[videoIndex] || !scripts[videoIndex]) return;
+  
+  const attempts = videoRetryAttempts[videoIndex] || 0;
+  if (attempts >= MAX_RETRY_ATTEMPTS) {
+    toast.error(`Max retry attempts (${MAX_RETRY_ATTEMPTS}) reached for video ${videoIndex + 1}`);
+    return;
+  }
+  
+  setRetryingVideos(prev => new Set([...prev, videoIndex]));
+  setVideoRetryAttempts(prev => ({ ...prev, [videoIndex]: attempts + 1 }));
+  setVideoStatuses(prev => {
+    const next = [...prev];
+    next[videoIndex] = "generating";
+    return next;
+  });
+  
+  try {
+    let capturedVoice = sharedVoicePrompt;
+    let compositeFile;
+    const composite = comps[videoIndex];
+    
+    // Handle different types of composite inputs
+    if (composite.file instanceof File) {
+      compositeFile = composite.file;
+    } else if (typeof composite.url === 'string' && composite.url.startsWith('data:')) {
+      const blob = dataURLToBlob(composite.url);
+      compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: 'image/png' });
+    } else if (typeof composite.url === 'string') {
+      const response = await fetch(composite.url);
+      const blob = await response.blob();
+      compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: blob.type });
+    } else if (composite.file && typeof composite.file === 'string') {
+      if (composite.file.startsWith('data:')) {
+        const blob = dataURLToBlob(composite.file);
+        compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: 'image/png' });
+      } else {
+        const response = await fetch(composite.file);
+        const blob = await response.blob();
+        compositeFile = new File([blob], `composite-${videoIndex}.png`, { type: blob.type });
+      }
+    } else {
+      throw new Error(`Invalid composite format for video ${videoIndex + 1}`);
+    }
+    
+    if (videoIndex === 0 || !capturedVoice) {
+      const formData = new FormData();
+      formData.append("compositeImage", compositeFile);
+      formData.append("script", scripts[videoIndex].trim());
+      if (capturedVoice) formData.append("sharedVoicePrompt", capturedVoice);
+      
+      const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: formData });
+      if (!response.ok) throw new Error("Generation failed");
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() ?? "";
+        
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "voice_ready" && event.voicePrompt && videoIndex === 0) {
+              capturedVoice = event.voicePrompt;
+              setSharedVoicePrompt(event.voicePrompt);
+            }
+            if (event.type === "video_ready") {
+              setVideoStatuses(prev => {
+                const next = [...prev];
+                next[videoIndex] = "ready";
+                return next;
+              });
+              setVideoResults(prev => {
+                const next = [...prev];
+                next[videoIndex] = { videoUrl: event.videoUrl };
+                return next;
+              });
+              toast.success(`Video ${videoIndex + 1} regenerated successfully!`);
+            }
+            if (event.type === "error") {
+              throw new Error(event.message);
+            }
+          } catch (e) {}
+        }
+      }
+    } else {
+      const response = await fetch("/api/real-estate-video/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          compositeImageUrl: composite.url,
+          script: scripts[videoIndex].trim(),
+          sharedVoicePrompt: capturedVoice
+        })
+      });
+      
+      if (!response.ok) throw new Error("Generation failed");
+      const data = await response.json();
+      
+      setVideoStatuses(prev => {
+        const next = [...prev];
+        next[videoIndex] = "ready";
+        return next;
+      });
+      setVideoResults(prev => {
+        const next = [...prev];
+        next[videoIndex] = { videoUrl: data.videoUrl };
+        return next;
+      });
+      toast.success(`Video ${videoIndex + 1} regenerated successfully!`);
+    }
+  } catch (err) {
+    console.error(`Retry failed for video ${videoIndex + 1}:`, err);
+    setVideoStatuses(prev => {
+      const next = [...prev];
+      next[videoIndex] = "error";
+      return next;
+    });
+    toast.error(`Failed to regenerate video ${videoIndex + 1}: ${err.message}`);
+  } finally {
+    setRetryingVideos(prev => {
+      const next = new Set(prev);
+      next.delete(videoIndex);
+      return next;
+    });
+  }
+};
+
+  const retryAllFailedVideos = async () => {
+    const failedIndices = videoStatuses
+      .map((status, idx) => status === "error" ? idx : null)
+      .filter(idx => idx !== null);
+    
+    if (failedIndices.length === 0) return;
+    
+    for (const idx of failedIndices) {
+      await retryVideoGeneration(idx);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  };
+
+  const retryScriptGeneration = async () => {
+    await handleGenerateScript();
+  };
+
+  const retryCompositeGeneration = async () => {
+    await handleGenerateComposites();
+  };
+
   function reset() {
     setPropertyImages([]);
     setSelectedAvatar(null);
@@ -541,10 +954,21 @@ function RealEstateVideoContent() {
     setCombining(false);
     setGenerating(false);
     setStep(0);
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    try { safeLocalStorage.removeItem(STORAGE_KEY); } catch {}
   }
 
   const showResults = videoStatuses.length > 0 && videoStatuses.some((s) => s !== "idle");
+
+  // Don't render until client-side
+  if (!isClient) {
+    return (
+      <div className="max-w-2xl mx-auto py-8 px-4">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 animate-fade-in">
@@ -755,6 +1179,16 @@ function RealEstateVideoContent() {
                 )}
               </div>
             )}
+
+            {/* Add session status indicator */}
+      {step > 0 && (
+        <div className="fixed bottom-4 right-4 z-40">
+          <div className="bg-background/80 backdrop-blur-sm rounded-full px-3 py-1.5 border border-border/50 shadow-lg text-[10px] text-muted-foreground flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            Auto-saving...
+          </div>
+        </div>
+      )}
 
             {avatarMode === "generate" && (
               <div className="space-y-4">
@@ -1133,11 +1567,11 @@ function RealEstateVideoContent() {
                 </div>
               )}
 
-              <div className="flex justify-center">
-                <Button variant="outline" size="sm" onClick={handleGenerateComposites} disabled={generatingComposites} className="cursor-pointer text-xs">
-                  <RotateCcw className="w-3 h-3 mr-1" /> Regenerate All
-                </Button>
-              </div>
+              <div className="flex gap-2 justify-center mt-2">
+          <Button variant="outline" size="sm" onClick={retryCompositeGeneration} className="cursor-pointer text-xs gap-1">
+            <RotateCcw className="w-3 h-3" /> Regenerate All Composites
+          </Button>
+        </div>
             </>
           )}
 
@@ -1336,6 +1770,13 @@ function RealEstateVideoContent() {
               {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4 mr-2" /> {isBatchMode ? `Generate ${batchSize} Videos` : "Generate Video"}</>}
             </Button>
           </div>
+
+          <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={retryScriptGeneration} className="cursor-pointer text-xs gap-1">
+            <RotateCcw className="w-3 h-3" /> Regenerate Script{isBatchMode ? 's' : ''}
+          </Button>
+        </div>
+
         </div>
       )}
 
@@ -1350,9 +1791,21 @@ function RealEstateVideoContent() {
                 ? "⚠️ Some videos encountered errors"
                 : "🏠 Creating your property showcase..."}
             </h2>
-            {videoStatuses.every((s) => s === "ready" || s === "error") && (
-              <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">Start over</Button>
-            )}
+            <div className="flex gap-2">
+              {videoStatuses.some(s => s === "error") && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={retryAllFailedVideos}
+                  className="cursor-pointer text-xs gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" /> Retry All Failed
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={reset} className="cursor-pointer text-xs">
+                Start over
+              </Button>
+            </div>
           </div>
 
           {/* Background generation notice */}
@@ -1372,8 +1825,17 @@ function RealEstateVideoContent() {
 
           {/* Video cards */}
           {videoStatuses.map((status, i) => (
-            <VideoCard key={i} status={status} video={videoResults[i]} />
-          ))}
+          <VideoCard 
+            key={i}
+            status={status}
+            video={videoResults[i]}
+            index={i}
+           onRetry={retryVideoGeneration}
+              retryingVideos={retryingVideos}
+             videoRetryAttempts={videoRetryAttempts}
+            maxRetryAttempts={3}
+            />
+            ))}
 
           {videoStatuses.every((s) => s === "ready") && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-center">
@@ -1442,6 +1904,16 @@ function RealEstateVideoContent() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Add session status indicator */}
+      {step > 0 && (
+        <div className="fixed bottom-4 right-4 z-40">
+          <div className="bg-background/80 backdrop-blur-sm rounded-full px-3 py-1.5 border border-border/50 shadow-lg text-[10px] text-muted-foreground flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            Auto-saving...
+          </div>
         </div>
       )}
     </div>
