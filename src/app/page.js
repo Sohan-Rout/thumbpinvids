@@ -6,11 +6,14 @@ import { Testimonials } from "@/components/landing/testimonials";
 import { Pricing } from "@/components/landing/pricing";
 import { Footer } from "@/components/landing/footer";
 
+import Showcase from "@/modules/home/components/showcase";
+
 export default function LandingPage() {
   return (
-    <main className="min-h-screen bg-neutral-100">
+    <main className="min-h-screen bg-[#f3f4f6]">
       <Navbar />
       <Hero />
+      <Showcase />
       <Features />
       <HowItWorks />
       <Testimonials />
