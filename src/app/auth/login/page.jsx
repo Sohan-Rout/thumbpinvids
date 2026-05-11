@@ -9,10 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Sparkles, Mail, Lock, Eye, EyeOff, User, Loader2 } from "lucide-react";
+import { Sparkles, Mail, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-export default function SignupPage() {
+export default function LoginPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -21,49 +21,25 @@ export default function SignupPage() {
     e.preventDefault();
     setLoading(true);
     const formData = new FormData(e.target);
-    const email = formData.get("email");
-    const password = formData.get("password");
-    const name = formData.get("name");
-
-    try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, name }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || "Registration failed");
-        setLoading(false);
-        return;
-      }
-
-      const result = await signIn("credentials", {
-        email,
-        password,
-        redirect: false,
-      });
-
-      if (result?.error) {
-        toast.error("Account created but sign-in failed. Please log in.");
-        router.push("/auth/login");
-      } else {
-        toast.success("Welcome! Your account is ready 🎉");
-        router.push("/app");
-      }
-    } catch (err) {
-      toast.error("Something went wrong. Please try again.");
-    } finally {
-      setLoading(false);
+    const result = await signIn("credentials", {
+      email: formData.get("email"),
+      password: formData.get("password"),
+      redirect: false,
+    });
+    setLoading(false);
+    if (result?.error) {
+      toast.error("Invalid email or password");
+    } else {
+      router.push("/app");
     }
   }
 
-  async function handleGoogleSignup() {
+  async function handleGoogleLogin() {
     await signIn("google", { callbackUrl: "/app" });
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-[#fafbfc]">
+    <div className="min-h-screen flex items-center justify-center px-4 bg-[#f3f4f6]">
       <div className="relative inline-block">
         <Image
           className="object-cover rounded-lg"
@@ -75,12 +51,12 @@ export default function SignupPage() {
 
         <div className="absolute inset-0 flex justify-center items-center">
           <Card className="w-full rounded-2xl max-w-sm border border-neutral-300 shadow-xl bg-white">
-            <CardHeader className="text-center pt-4">
+            <CardHeader className="text-center pt-8">
               <CardTitle className="text-2xl font-semibold">
-                Create your account
+                Welcome back
               </CardTitle>
               <p className="text-sm mt-1">
-                Start generating videos for free
+                Sign in to your account
               </p>
             </CardHeader>
 
@@ -89,7 +65,7 @@ export default function SignupPage() {
               <Button
                 variant="outline"
                 className="w-full rounded-xl cursor-pointer border border-neutral-200 bg-neutral-100 mb-5 h-12 text-md font-medium"
-                onClick={handleGoogleSignup}
+                onClick={handleGoogleLogin}
               >
                 <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
                   <path
@@ -119,24 +95,8 @@ export default function SignupPage() {
                 </span>
               </div>
 
-              {/* Form */}
+              {/* Email/Password Form */}
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="name" className="text-sm font-medium">
-                    Full Name
-                  </Label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="name"
-                      name="name"
-                      type="text"
-                      placeholder="John Doe"
-                      className="pl-9 h-12 text-md bg-neutral-100 border border-neutral-200 rounded-xl"
-                    />
-                  </div>
-                </div>
-
                 <div className="space-y-1.5">
                   <Label htmlFor="email" className="text-sm font-medium">
                     Email
@@ -148,7 +108,7 @@ export default function SignupPage() {
                       name="email"
                       type="email"
                       placeholder="you@example.com"
-                      className="pl-9 pr-9 h-12 bg-neutral-100 border border-neutral-200 rounded-xl text-md"
+                      className="pl-9 h-12 text-md bg-neutral-100 border border-neutral-200 rounded-xl"
                       required
                     />
                   </div>
@@ -164,9 +124,8 @@ export default function SignupPage() {
                       id="password"
                       name="password"
                       type={showPassword ? "text" : "password"}
-                      placeholder="Minimum 6 characters"
+                      placeholder="••••••••"
                       className="pl-9 pr-9 h-12 bg-neutral-100 border border-neutral-200 rounded-xl text-md"
-                      minLength={6}
                       required
                     />
                     <button
@@ -190,26 +149,19 @@ export default function SignupPage() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating
-                      account...
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Signing
+                      in...
                     </>
                   ) : (
-                    "Create Account"
+                    "Sign In"
                   )}
                 </Button>
               </form>
 
-              <p className="text-center text-xs text-muted-foreground mt-5">
-                By signing up, you agree to our Terms and Privacy Policy.
-              </p>
-
-              <p className="text-center text-sm text-muted-foreground mt-4">
-                Already have an account?{" "}
-                <Link
-                  href="/auth/login"
-                  className="text-amber-600"
-                >
-                  Sign in
+              <p className="text-center text-sm mt-6">
+                Don&apos;t have an account?{" "}
+                <Link href="/auth/signup" className="text-amber-600">
+                  Sign up
                 </Link>
               </p>
             </CardContent>
