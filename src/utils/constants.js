@@ -8,6 +8,16 @@ export const LANGUAGES = [
   { id: "english", label: "English" },
   { id: "hindi", label: "Hindi" },
   { id: "hinglish", label: "Hinglish" },
+  { id: "marathi", label: "Marathi" },
+  { id: "tamil", label: "Tamil" },
+  { id: "telugu", label: "Telugu" },
+  { id: "kannada", label: "Kannada" },
+  { id: "malayalam", label: "Malayalam" },
+  { id: "bengali", label: "Bengali" },
+  { id: "gujarati", label: "Gujarati" },
+  { id: "punjabi", label: "Punjabi" },
+  { id: "urdu", label: "Urdu" },
+  { id: "odia", label: "Odia" },
 ];
 
 export const TONES = [

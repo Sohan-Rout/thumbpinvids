@@ -110,7 +110,15 @@ export const safeLocalStorage = {
   },
   setItem: (key, value) => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(key, value);
+      try {
+        localStorage.setItem(key, value);
+      } catch (error) {
+        if (error?.name === 'QuotaExceededError' || String(error?.message || '').toLowerCase().includes('quota')) {
+          console.warn('[safeLocalStorage] Storage quota exceeded, skipping key:', key);
+          return;
+        }
+        throw error;
+      }
     }
   },
   removeItem: (key) => {

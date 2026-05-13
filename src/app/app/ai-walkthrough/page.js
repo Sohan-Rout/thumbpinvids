@@ -157,18 +157,12 @@ function RealEstateVideoContent() {
 
         safeLocalStorage.setItem("currentSessionId", sessionId);
         safeLocalStorage.setItem(`${sessionId}_step`, step.toString());
-        
-        if (compositesHook.composites.length > 0) {
-          safeLocalStorage.setItem(`${sessionId}_composites`, JSON.stringify(compositesHook.composites));
-        }
-        
-        if (compositesHook.selectedCompositeIndices.size > 0) {
-          safeLocalStorage.setItem(`${sessionId}_selected`, JSON.stringify([...compositesHook.selectedCompositeIndices]));
-        }
-        
-        if (scriptHook.structuredScripts.length > 0) {
-          safeLocalStorage.setItem(`${sessionId}_scripts`, JSON.stringify(scriptHook.structuredScripts));
-        }
+        safeLocalStorage.setItem(`${sessionId}_meta`, JSON.stringify({
+          propertyImagesCount: propertyImages.length,
+          compositesCount: compositesHook.composites.length,
+          selectedCount: compositesHook.selectedCompositeIndices.size,
+          scriptsCount: scriptHook.structuredScripts.length,
+        }));
       } catch (error) {
         console.error("Save failed:", error);
       }
@@ -246,7 +240,7 @@ function RealEstateVideoContent() {
   if (!isClient) {
     return (
       <div className="max-w-2xl mx-auto py-8 px-4">
-        <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex items-center justify-center min-h-100">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
       </div>
@@ -348,7 +342,7 @@ function RealEstateVideoContent() {
 export default function AIWalkthroughPage() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex items-center justify-center min-h-100">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     }>

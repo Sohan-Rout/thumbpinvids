@@ -89,11 +89,21 @@ export async function POST(request) {
 
     // ── Language / tone ──────────────────────────────────────────────────────
     const langMap = {
-      english:  "The presenter speaks in natural, confident English.",
+      english:  "The presenter speaks in natural, confident Indian-English.",
       hindi:    "The presenter speaks in natural Hindi (Devanagari script).",
       hinglish: "The presenter speaks in Hinglish — casual mix of Hindi and English in Roman script, as spoken in urban India.",
+      marathi:  "The presenter speaks in natural Marathi with a warm Maharashtrian tone.",
+      tamil:    "The presenter speaks in natural Tamil with a polished South Indian tone.",
+      telugu:   "The presenter speaks in natural Telugu with a smooth, clear delivery.",
+      kannada:  "The presenter speaks in natural Kannada with a calm, confident delivery.",
+      malayalam:"The presenter speaks in natural Malayalam with an elegant, grounded delivery.",
+      bengali:  "The presenter speaks in natural Bengali with a soft, expressive delivery.",
+      gujarati: "The presenter speaks in natural Gujarati with a bright, friendly tone.",
+      punjabi:  "The presenter speaks in natural Punjabi with a warm, energetic delivery.",
+      urdu:     "The presenter speaks in natural Urdu with an elegant, expressive delivery.",
+      odia:     "The presenter speaks in natural Odia with a smooth, conversational delivery.",
     };
-    const langRule = langMap[language] || langMap.english;
+    const langRule = langMap[language] || langMap.hindi;
 
     const emotionRule = allowEmotionTags
       ? "You may embed emotion tags like {{excited}}, {{calm}}, {{happy}} immediately before the word/phrase they color. Keep tags exactly as written."

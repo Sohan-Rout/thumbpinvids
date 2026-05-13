@@ -1,6 +1,7 @@
 // components/real-estate-video/components/VideoResults.js
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, RotateCcw, Merge, Download, Film, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import VideoCard from "@/modules/ai-walkthrough/components/VideoCard";
 
 export const VideoResults = ({ videoHook, compositesHook, onReset }) => {
@@ -98,7 +99,7 @@ export const VideoResults = ({ videoHook, compositesHook, onReset }) => {
 
       {/* Combine Videos Section */}
       {showCombine && (
-        <div className="rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-fuchsia-500/5 p-4 space-y-3">
+        <div className="rounded-xl border border-violet-500/30 bg-linear-to-br from-violet-500/5 to-fuchsia-500/5 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-full bg-violet-500/20 flex items-center justify-center">
               <Film className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
@@ -133,7 +134,7 @@ export const VideoResults = ({ videoHook, compositesHook, onReset }) => {
 
           {combinedVideo && (
             <div className="space-y-3">
-              <div className="rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-80 mx-auto border border-violet-500/30">
+              <div className="rounded-xl overflow-hidden bg-black aspect-9/16 max-h-80 mx-auto border border-violet-500/30">
                 <video
                   src={combinedVideo.serverUrl || combinedVideo.blobUrl}
                   controls

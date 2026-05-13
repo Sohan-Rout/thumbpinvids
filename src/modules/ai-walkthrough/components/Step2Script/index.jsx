@@ -36,6 +36,9 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
   // Get the two script types
   const shortScript = structuredScripts?.find(s => s?.type === "short_form");
   const longScript = structuredScripts?.find(s => s?.type === "long_form");
+  const canGenerateFinalVideos =
+    (shortScript?.fullScript || "").trim().length >= 15 &&
+    (longScript?.fullScript || "").trim().length >= 15;
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -77,6 +80,9 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           </button>
         ))}
       </div>
+      <p className="text-[10px] text-muted-foreground -mt-1">
+        Indian languages supported: Hindi, Hinglish, Marathi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Punjabi, Urdu, and Odia.
+      </p>
 
       {/* Tone */}
       <div className="space-y-2">
@@ -122,7 +128,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           value={script}
           onChange={(e) => setScript(e.target.value.slice(0, MAX_SCRIPT))}
           placeholder="e.g. 'mention the terrace view' or 'highlight the modern kitchen' — AI will incorporate this into both scripts"
-          className="min-h-[80px] resize-none text-sm"
+          className="min-h-20 resize-none text-sm"
           maxLength={MAX_SCRIPT}
         />
       </div>
@@ -152,8 +158,8 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
               <p className="text-[10px] text-muted-foreground">Using {selectedCompositeArray.length} reference angles for accuracy</p>
             </div>
           </div>
-          <div className="h-[120px] rounded-xl bg-muted/40 animate-pulse" />
-          <div className="h-[180px] rounded-xl bg-muted/40 animate-pulse" />
+          <div className="h-30 rounded-xl bg-muted/40 animate-pulse" />
+          <div className="h-45 rounded-xl bg-muted/40 animate-pulse" />
         </div>
       )}
 
@@ -165,7 +171,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           </div>
           <div className="text-center space-y-1">
             <p className="text-sm font-semibold">No scripts generated yet</p>
-            <p className="text-xs text-muted-foreground max-w-[240px] mx-auto">
+            <p className="text-xs text-muted-foreground max-w-60 mx-auto">
               Click the button above to generate professional short and long form scripts for your videos.
             </p>
           </div>
@@ -212,7 +218,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
                   return b;
                 });
               }}
-              className="min-h-[100px] resize-none text-sm bg-background border-primary/10 focus-visible:ring-primary/30"
+              className="min-h-25 resize-none text-sm bg-background border-primary/10 focus-visible:ring-primary/30"
               placeholder="Short script (8-10 seconds)"
             />
             <p className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
@@ -262,7 +268,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
                   return b;
                 });
               }}
-              className="min-h-[150px] resize-none text-sm bg-background border-border/50 focus-visible:ring-primary/20"
+              className="min-h-37.5 resize-none text-sm bg-background border-border/50 focus-visible:ring-primary/20"
               placeholder="Full script (45-60 seconds)"
             />
             <p className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
@@ -292,7 +298,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           )}
           <Button 
             onClick={onGenerate} 
-            disabled={!isValid || generating || generatingScript} 
+            disabled={!canGenerateFinalVideos || generating || generatingScript} 
             className="gradient-bg text-white shadow-lg cursor-pointer px-10 h-10 font-semibold"
           >
             {generating ? (

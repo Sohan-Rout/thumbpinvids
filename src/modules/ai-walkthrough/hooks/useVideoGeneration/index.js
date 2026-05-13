@@ -19,7 +19,7 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
   const [combineProgress, setCombineProgress] = useState("");
   const [combinedVideo, setCombinedVideo] = useState(null);
 
-  const { script, structuredScripts, sharedVoicePrompt, setSharedVoicePrompt, isBatchMode } = scriptHook;
+  const { script, batchScripts, structuredScripts, sharedVoicePrompt, setSharedVoicePrompt, isBatchMode, language } = scriptHook;
 
   // Cleanup function after successful generation
   const cleanupSessionData = async (keepPropertyImages = true, keepAvatars = true) => {
@@ -58,6 +58,7 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
     const fd = new FormData();
     fd.append("compositeImage", compositeFile);
     fd.append("script", scriptText.trim());
+    fd.append("language", language || "hindi");
     if (providedVoicePrompt) fd.append("sharedVoicePrompt", providedVoicePrompt);
 
     const response = await fetch("/api/real-estate-video/generate", { method: "POST", body: fd });
@@ -107,7 +108,11 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
   const handleGenerateVideo = async () => {
     const comps = selectedCompositeArray;
     const scripts = isBatchMode
-      ? structuredScripts.map((s) => s.fullScript || "")
+      ? (structuredScripts.length > 0
+          ? structuredScripts.map((s) => s.fullScript || "")
+          : batchScripts.length > 0
+            ? batchScripts
+            : (script.trim() ? [script, script] : []))
       : [script];
     
     if (comps.length === 0 || scripts.some((s) => !s?.trim())) return;
@@ -149,7 +154,11 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
   const retryVideoGeneration = async (videoIndex) => {
     const comps = selectedCompositeArray;
     const scripts = isBatchMode
-      ? structuredScripts.map((s) => s.fullScript || "")
+      ? (structuredScripts.length > 0
+          ? structuredScripts.map((s) => s.fullScript || "")
+          : batchScripts.length > 0
+            ? batchScripts
+            : (script.trim() ? [script, script] : []))
       : [script];
     
     if (!comps[videoIndex] || !scripts[videoIndex]) return;

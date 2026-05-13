@@ -8,7 +8,7 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
   const [batchScripts, setBatchScripts] = useState([]);
   const [structuredScripts, setStructuredScripts] = useState([]);
   const [sharedVoicePrompt, setSharedVoicePrompt] = useState("");
-  const [language, setLanguage] = useState("english");
+  const [language, setLanguage] = useState("hindi");
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
   const [generatingScript, setGeneratingScript] = useState(false);
@@ -18,9 +18,12 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
   const isBatchMode = true; // Force batch mode to always generate multiple scripts
 
   const isStep2Valid = () => {
-    // Check if we have exactly 2 scripts with content
-    return structuredScripts.length === TARGET_SCRIPT_COUNT && 
-           structuredScripts.every((s) => (s.fullScript || "").trim().length >= 15);
+    const scriptsToCheck = structuredScripts.length > 0
+      ? structuredScripts
+      : batchScripts.map((fullScript, idx) => ({ fullScript, id: idx }));
+
+    return scriptsToCheck.length === TARGET_SCRIPT_COUNT &&
+      scriptsToCheck.every((s) => (s.fullScript || "").trim().length >= 15);
   };
 
   const handleGenerateScript = async () => {

@@ -42,6 +42,7 @@ export async function POST(request) {
     const formData = await request.formData();
     const compositeFile = formData.get("compositeImage");
     const script = formData.get("script");
+    const language = formData.get("language") || "hindi";
     // Voice prompt: generated internally, OR provided as sharedVoicePrompt for voice consistency across batch
     let voicePrompt = formData.get("voicePrompt") || "";
     const sharedVoicePrompt = formData.get("sharedVoicePrompt") || "";
@@ -145,7 +146,7 @@ export async function POST(request) {
             });
 
             try {
-              voicePrompt = await generateVoicePromptInternal(ai, compositeInlineData, script);
+              voicePrompt = await generateVoicePromptInternal(ai, compositeInlineData, script, language);
               console.log("[RealEstateVideo] Voice prompt generated internally");
             } catch (vpErr) {
               console.error("[RealEstateVideo] Voice prompt gen failed, using default:", vpErr.message);
@@ -167,7 +168,7 @@ export async function POST(request) {
             message: "🏠 Generating your property video with Veo 3.1...",
           });
 
-          const veoPrompt = buildVideoPrompt(script, voicePrompt);
+          const veoPrompt = buildVideoPrompt(script, voicePrompt, language);
 
           const generationOp = await ai.models.generateVideos({
             model: "veo-3.1-generate-preview",
@@ -307,10 +308,30 @@ export async function POST(request) {
 /**
  * Generate voice prompt internally using Gemini.
  */
-async function generateVoicePromptInternal(ai, compositeInlineData, script) {
+async function generateVoicePromptInternal(ai, compositeInlineData, script, language = "hindi") {
+  const languageRules = {
+    english: "The speech should be in clear Indian-English with a neutral urban Indian accent.",
+    hindi: "The speech should be in natural Hindi with a polished North Indian delivery.",
+    hinglish: "The speech should blend Hindi and English naturally in urban Hinglish.",
+    marathi: "The speech should be in fluent Marathi with a warm Maharashtrian delivery.",
+    tamil: "The speech should be in fluent Tamil with a natural Chennai/Coastal Tamil cadence.",
+    telugu: "The speech should be in fluent Telugu with a smooth, warm delivery.",
+    kannada: "The speech should be in fluent Kannada with a calm, confident delivery.",
+    malayalam: "The speech should be in fluent Malayalam with a refined, natural delivery.",
+    bengali: "The speech should be in fluent Bengali with a soft, expressive delivery.",
+    gujarati: "The speech should be in fluent Gujarati with a bright, friendly delivery.",
+    punjabi: "The speech should be in fluent Punjabi with a warm, energetic delivery.",
+    urdu: "The speech should be in fluent Urdu with an elegant, expressive delivery.",
+    odia: "The speech should be in fluent Odia with a smooth, natural delivery.",
+  };
+  const languageRule = languageRules[language] || languageRules.hindi;
+
   const prompt = `You are an expert voice casting director for real estate video content.
 
 Look at this image of a person presenting a property. They will speak: "${script}"
+
+LANGUAGE / ACCENT REQUIREMENT:
+${languageRule}
 
 The script may include inline emotion tags like {{happy}}, {{sad}}, {{excited}}, {{calm}}. Use these tags to shape delivery, but do NOT speak the tags aloud.
 
@@ -325,7 +346,7 @@ Return a single paragraph with ALL attributes comma-separated:
 - Speaking style: confident real estate presenter, NOT stiff
 - Vocal expressiveness (dramatic pauses before key features, voice drops for intimate moments)
 - Pacing: measured but engaging, ~140 wpm
-- RECORDING QUALITY: dry close-mic (6 inches), zero reverb, zero echo, zero robotic artifacts, warm chest resonance, natural sibilance, soft room ambient hum, natural dynamic range
+- RECORDING QUALITY: dry close-mic (6 inches), zero reverb, zero echo, zero surround sound, zero robotic artifacts, warm chest resonance, natural sibilance, soft room ambient hum, natural dynamic range
 
 Return ONLY the voice description paragraph. No headers, no explanations.`;
 
@@ -343,13 +364,13 @@ Return ONLY the voice description paragraph. No headers, no explanations.`;
  * Fallback voice prompt if Gemini fails.
  */
 function getDefaultVoicePrompt() {
-  return "Male or female, age 28-38, polished neutral Indian-English accent with confident urban inflection, medium pitch that drops for authoritative property facts and rises with warm excitement for premium features, rich confident tone with natural warmth, opens with dramatic attention-grabbing hook delivery then transitions to smooth professional walkthrough and closes with aspirational warmth, confident real estate presenter style, deliberate pauses for emphasis on key features, measured pacing around 140 words per minute, recorded on dry close-mic with zero reverb and zero echo, warm chest resonance with natural sibilance, subtle room ambient hum, natural dynamic range, absolutely no robotic or metallic artifacts.";
+  return "Male or female, age 28-38, polished neutral Indian-English accent with confident urban inflection, medium pitch that drops for authoritative property facts and rises with warm excitement for premium features, rich confident tone with natural warmth, opens with dramatic attention-grabbing hook delivery then transitions to smooth professional walkthrough and closes with aspirational warmth, confident real estate presenter style, deliberate pauses for emphasis on key features, measured pacing around 140 words per minute, recorded on dry close-mic with zero reverb, zero echo, zero surround sound, warm chest resonance with natural sibilance, subtle room ambient hum, natural dynamic range, absolutely no robotic or metallic artifacts.";
 }
 
 /**
  * Build a cinematic Veo prompt for real estate property showcase.
  */
-function buildVideoPrompt(script, voicePrompt) {
+function buildVideoPrompt(script, voicePrompt, language = "hindi") {
   const SKIN_TOKENS = `Photorealistic detail. Real human skin with visible natural texture, pores, and micro shadows. Preserve natural under-eye detail and realistic lip texture. No airbrushing or waxy finish. Authentic facial structure with natural micro-expressions and eye depth. Lighting behaves naturally with soft highlights and realistic shadows. High-detail editorial realism, grounded in real-world 4k camera capture.`;
 
   const AUDIO_REALISM = `AUDIO REALISM (CRITICAL — NO ROBOTIC ARTIFACTS):
@@ -362,6 +383,22 @@ function buildVideoPrompt(script, voicePrompt) {
 
   const VOICE_LINE = `VOICE CHARACTERISTICS: ${voicePrompt}
 - Lip movements must be perfectly synchronized with speech at all times`;
+
+  const LANGUAGE_LINE = {
+    english: "The presenter speaks in clear Indian-English.",
+    hindi: "The presenter speaks in natural Hindi.",
+    hinglish: "The presenter speaks in natural Hinglish.",
+    marathi: "The presenter speaks in fluent Marathi.",
+    tamil: "The presenter speaks in fluent Tamil.",
+    telugu: "The presenter speaks in fluent Telugu.",
+    kannada: "The presenter speaks in fluent Kannada.",
+    malayalam: "The presenter speaks in fluent Malayalam.",
+    bengali: "The presenter speaks in fluent Bengali.",
+    gujarati: "The presenter speaks in fluent Gujarati.",
+    punjabi: "The presenter speaks in fluent Punjabi.",
+    urdu: "The presenter speaks in fluent Urdu.",
+    odia: "The presenter speaks in fluent Odia.",
+  }[language] || "The presenter speaks in natural Hindi.";
 
   const REALISM_FOOTER = `CRITICAL CONSTRAINTS:
 - The person, their clothing, the property, and the setting must EXACTLY match the reference image
@@ -408,6 +445,7 @@ PROPERTY SHOWCASE MOMENTS:
 
 SPEECH AND AUDIO:
 - The person speaks the following with confident warmth and real estate presenter energy: "${script}"
+- ${LANGUAGE_LINE}
 - ${VOICE_LINE}
 - Delivery should feel professional but genuine — like a trusted advisor showing you your dream home
 - Hook delivery should be attention-grabbing — designed to stop the scroll

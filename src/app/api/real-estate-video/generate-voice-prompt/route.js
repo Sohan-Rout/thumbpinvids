@@ -24,6 +24,7 @@ export async function POST(request) {
     const formData = await request.formData();
     const compositeFile = formData.get("compositeImage");
     const script = formData.get("script");
+    const language = formData.get("language") || "hindi";
 
     if (!compositeFile || !script) {
       return NextResponse.json({ error: "compositeImage and script are required" }, { status: 400 });
@@ -40,11 +41,30 @@ export async function POST(request) {
 
     const compositeData = await fileToBase64(compositeFile);
 
+    const languageGuides = {
+      english: "Deliver the voice in clear Indian-English with a neutral, premium urban accent.",
+      hindi: "Deliver the voice in natural Hindi with a polished Indian presentation style.",
+      hinglish: "Deliver the voice in natural Hinglish with a casual but premium Indian urban feel.",
+      marathi: "Deliver the voice in fluent Marathi with a warm Maharashtrian delivery.",
+      tamil: "Deliver the voice in fluent Tamil with a natural South Indian delivery.",
+      telugu: "Deliver the voice in fluent Telugu with a smooth, warm delivery.",
+      kannada: "Deliver the voice in fluent Kannada with a calm, confident delivery.",
+      malayalam: "Deliver the voice in fluent Malayalam with an elegant, natural delivery.",
+      bengali: "Deliver the voice in fluent Bengali with a soft, expressive delivery.",
+      gujarati: "Deliver the voice in fluent Gujarati with a bright, friendly delivery.",
+      punjabi: "Deliver the voice in fluent Punjabi with a warm, energetic delivery.",
+      urdu: "Deliver the voice in fluent Urdu with an elegant, expressive delivery.",
+      odia: "Deliver the voice in fluent Odia with a smooth, natural delivery.",
+    };
+
     const prompt = `You are an expert voice casting director specializing in real estate video content and property showcase videos.
 
 Look at this image of a person presenting a property. They will speak the following script in a short property showcase video:
 
 SCRIPT: "${script}"
+
+LANGUAGE / DELIVERY REQUIREMENT:
+${languageGuides[language] || languageGuides.hindi}
 
 Based on:
 1. The person's apparent gender, age, ethnicity, and overall vibe from the image
@@ -64,8 +84,8 @@ FORMAT — Return a single paragraph with ALL of these attributes, comma-separat
 - Pacing: measured but engaging — slightly slower for premium feel, speeds up subtly for exciting features, deliberate pauses for emphasis
 - Energy level: confident and warm — the energy of someone who genuinely LOVES showing beautiful spaces
 - Natural vocal habits (slight smile in voice when describing aspirational features, warm breath before hook delivery)
-- RECORDING QUALITY (CRITICAL): dry close-mic (6 inches from mouth), zero reverb, zero echo, zero robotic artifacts, warm natural chest resonance, subtle lip-smack between sentences, natural sibilance on 's' sounds, soft room ambient hum (NOT dead digital silence), natural dynamic range
-- Background ambience: very soft natural room tone ONLY, NO music, NO echo, intimate close-mic presence
+- RECORDING QUALITY (CRITICAL): dry close-mic (6 inches from mouth), zero reverb, zero echo, zero surround sound, zero robotic artifacts, warm natural chest resonance, subtle lip-smack between sentences, natural sibilance on 's' sounds, soft room ambient hum (NOT dead digital silence), natural dynamic range
+- Background ambience: very soft natural room tone ONLY, NO music, NO echo, NO surround sound, intimate close-mic presence
 
 CRITICAL RULES:
 1. Return ONLY the voice description paragraph. No headers, no explanations.
