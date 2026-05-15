@@ -193,20 +193,48 @@ FOR THE UI FIELDS (hook / walkthrough / cta):
       const batchPrompt = `${DIRECTOR_BRIEF}
 
 You have ${N} composite images showing the SAME presenter in DIFFERENT rooms/spaces of the same property.
-Together they form a continuous walkthrough — each clip is 8 seconds. They will be stitched together.
+Together they form a continuous walkthrough — each clip is 8 seconds. They will be stitched together into one seamless property tour.
 
-PER-CLIP USER INTENT (what user wants said in each clip):
+PER-CLIP USER INTENT (what user wants said in each clip — MUST be incorporated with HIGH priority):
 ${intentLines}
 
+═══════════════════════════════════════════════════════════
+⚠️  AVATAR CONTINUATION — CRITICAL FOR VISUAL FLOW
+    These clips will play back-to-back. To create seamless continuation:
+    
+    Clip 1 (OPENING): Avatar starts naturally in the scene. At the END of the clip,
+      the avatar WALKS TOWARD THE RIGHT side of the frame and exits the frame to the right.
+      
+    Clips 2 to ${N - 1} (MIDDLE): Avatar ENTERS from the LEFT side of the frame at the START.
+      Walks into the new room/space. Delivers the line. At the END, the avatar
+      WALKS TOWARD THE RIGHT side of the frame and exits the frame to the right.
+      
+    Clip ${N} (CLOSING): Avatar ENTERS from the LEFT side of the frame at the START.
+      Walks into the final space. Delivers the closing line. Stays in frame — does NOT exit.
+
+    This exit-right → enter-left pattern is MANDATORY for every transition.
+    The avatar MUST wear the EXACT SAME outfit in every clip.
+    The avatar MUST use the EXACT SAME voice in every clip.
+═══════════════════════════════════════════════════════════
+
 NARRATIVE ARC — this is a JOURNEY through one property:
-  Clip 1 = EXPLOSIVE ENTRY — make the viewer STOP scrolling. Big hook, big energy, WOW moment.
+  Clip 1 = CONFIDENT ENTRY — make the viewer STOP scrolling. Big hook, energy, WOW moment.
   Clips 2 to ${N - 1} = STEADY REVEAL — each room is a new surprise, energy builds then eases.
   Clip ${N} = SLOW CONFIDENT CLOSE — let the space breathe, presenter exudes certainty.
 
-CAMERA VARIETY (use DIFFERENT shots for each clip — do NOT repeat):
-  Clip 1 ideas: fast handheld rush-in, whip-pan reveal, close face then pull back
-  Middle ideas: smooth dolly through doorway, rack focus on feature then presenter, turn-and-gesture
-  Final ideas: slow push-in, presenter steps aside wide reveal, lingering hold then smile to camera
+CAMERA STYLE — REAL ESTATE PROFESSIONAL (NO face zooms!):
+  ❌ NEVER zoom into the avatar's face — this is NOT a vlog, it's a property showcase
+  ❌ NEVER do extreme close-ups of the presenter
+  ❌ NEVER use shaky or aggressive handheld movement
+  ✅ Keep the avatar at MEDIUM to WIDE framing — show the property AROUND them
+  ✅ Use smooth, slow, professional real estate camera movements:
+  
+  Clip 1 ideas: slow push-in from wide establishing shot, smooth dolly alongside presenter, gentle tracking shot
+  Middle ideas: smooth lateral dolly through doorway, slow pan from feature to presenter, gentle follow as presenter walks through space
+  Final ideas: slow pull-back to wide revealing shot, presenter steps aside for final property reveal, lingering wide hold
+
+  CAMERA MOVEMENT SPEED: Subtle and elegant. Think luxury real estate cinematography, NOT action movie.
+  All camera movements should be SLOW and STEADY — like a Steadicam operator on a professional shoot.
 
 Generate exactly ${N} cinematic video ad prompts.
 Return ONLY a valid JSON array:
@@ -267,9 +295,27 @@ No markdown, no explanation, no text outside the JSON array.`;
       );
     }
 
+    // Check for clip position context (when regenerating a single clip in a multi-clip walkthrough)
+    const clipPosition = formData.get("clipPosition") || "";
+    const clipIndex = parseInt(formData.get("clipIndex")) || 0;
+    const totalClips = parseInt(formData.get("totalClips")) || 1;
+    
+    let continuationBlock = "";
+    if (totalClips > 1) {
+      if (clipPosition === "first") {
+        continuationBlock = `\nCONTINUATION: This is clip ${clipIndex + 1} of ${totalClips}. At the END, the avatar must WALK TOWARD THE RIGHT and EXIT the frame to the right.\n`;
+      } else if (clipPosition === "last") {
+        continuationBlock = `\nCONTINUATION: This is clip ${clipIndex + 1} of ${totalClips}. At the START, the avatar must ENTER from the LEFT side of the frame. The avatar stays in frame at the end.\n`;
+      } else {
+        continuationBlock = `\nCONTINUATION: This is clip ${clipIndex + 1} of ${totalClips}. At the START, the avatar must ENTER from the LEFT. At the END, the avatar must EXIT to the RIGHT.\n`;
+      }
+    }
+    
     const singlePrompt = `${DIRECTOR_BRIEF}
 
 You have ONE composite image showing a presenter in a property space.
+${continuationBlock}
+CAMERA STYLE: Use smooth, slow, professional real estate camera movements. NO face zooms. Keep MEDIUM to WIDE framing — show the property around the presenter. Slow Steadicam-style movement.
 
 Generate ONE cinematic 8-second real estate video ad prompt.
 

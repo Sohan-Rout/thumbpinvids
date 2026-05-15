@@ -37,14 +37,16 @@ export async function GET(request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // Check for Range header (needed for video streaming/seeking)
+    const rangeHeader = request.headers.get("range");
+
     // Fetch from R2 using DECODED key
-    console.log("[R2 Proxy] Fetching from R2...");
-    const response = await s3.send(
-      new GetObjectCommand({ 
-        Bucket: BUCKET, 
-        Key: key  // Use decoded key here
-      })
-    );
+    console.log("[R2 Proxy] Fetching from R2...", rangeHeader ? `Range: ${rangeHeader}` : "Full");
+    const command = { Bucket: BUCKET, Key: key };
+    if (rangeHeader) {
+      command.Range = rangeHeader;
+    }
+    const response = await s3.send(new GetObjectCommand(command));
 
     const contentType = response.ContentType || "application/octet-stream";
     const body = response.Body;
@@ -59,7 +61,22 @@ export async function GET(request) {
     }
     const buffer = Buffer.concat(chunks);
 
-    console.log("[R2 Proxy] Success! Returning", buffer.length, "bytes");
+    const isVideo = contentType.startsWith("video/");
+    console.log("[R2 Proxy] Success! Returning", buffer.length, "bytes", isVideo ? "(video)" : "");
+
+    // For range requests (video seeking), return 206 Partial Content
+    if (rangeHeader && response.ContentRange) {
+      return new NextResponse(buffer, {
+        status: 206,
+        headers: {
+          "Content-Type": contentType,
+          "Content-Range": response.ContentRange,
+          "Content-Length": String(buffer.length),
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "private, max-age=3600",
+        },
+      });
+    }
 
     return new NextResponse(buffer, {
       status: 200,
@@ -67,6 +84,7 @@ export async function GET(request) {
         "Content-Type": contentType,
         "Cache-Control": "private, max-age=3600",
         "Content-Length": String(buffer.length),
+        "Accept-Ranges": "bytes",
       },
     });
   } catch (error) {

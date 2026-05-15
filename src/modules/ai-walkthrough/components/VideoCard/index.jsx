@@ -4,13 +4,12 @@ import {
   Download,
   RotateCcw,
   AlertCircle,
-  Volume2,
-  VolumeX,
   Maximize2,
   XCircle,
-  RefreshCw
+  RefreshCw,
+  X
 } from "lucide-react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 export default function VideoCard({ 
   status, 
@@ -22,8 +21,10 @@ export default function VideoCard({
   maxRetryAttempts = 3 
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const [videoLoaded, setVideoLoaded] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const videoRef = useRef(null);
   
   const isGenerating = status === "generating";
@@ -43,34 +44,37 @@ export default function VideoCard({
     return url;
   };
 
-  const handlePlayPause = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
+  const handleFullscreen = useCallback(() => {
+    if (isFullscreen) {
+      setIsFullscreen(false);
+      return;
     }
-  };
+    setIsFullscreen(true);
+  }, [isFullscreen]);
 
-  const handleMute = () => {
-    if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
-  };
-
-  const handleFullscreen = () => {
-    if (videoRef.current) {
-      if (videoRef.current.requestFullscreen) {
-        videoRef.current.requestFullscreen();
+  // Close fullscreen on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
       }
+    };
+    if (isFullscreen) {
+      document.addEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
     }
-  };
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [isFullscreen]);
 
   const handleVideoPlay = () => setIsPlaying(true);
   const handleVideoPause = () => setIsPlaying(false);
+  const handleVideoError = () => setVideoError(true);
+  const handleVideoLoaded = () => { setVideoLoaded(true); setVideoError(false); };
 
   // Calculate progress for generating state
   const getProgressMessage = () => {
@@ -94,7 +98,7 @@ export default function VideoCard({
       isReady 
         ? "border-primary/40 bg-card shadow-lg hover:shadow-xl" 
         : isGenerating 
-        ? "border-amber-500/40 bg-gradient-to-br from-amber-500/5 to-orange-500/5" 
+        ? "border-amber-500/40 bg-linear-to-br from-amber-500/5 to-orange-500/5" 
         : isError
         ? "border-destructive/40 bg-destructive/5"
         : "border-border/40 bg-muted/30 opacity-50"
@@ -207,68 +211,63 @@ export default function VideoCard({
       {/* Video Player */}
       {isReady && fixedVideoUrl && (
         <div className="p-4 pt-3">
-          <div className="relative rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-96 mx-auto group">
+          <div className="relative rounded-xl overflow-hidden bg-black aspect-9/16 max-h-96 mx-auto group">
+            {/* Loading state */}
+            {!videoLoaded && !videoError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
+                <Loader2 className="w-6 h-6 animate-spin text-white" />
+              </div>
+            )}
+            
+            {/* Error state */}
+            {videoError && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-10 gap-2">
+                <AlertCircle className="w-6 h-6 text-destructive" />
+                <p className="text-xs text-white/70">Failed to load video</p>
+                <button
+                  onClick={() => {
+                    setVideoError(false);
+                    setVideoLoaded(false);
+                    if (videoRef.current) {
+                      videoRef.current.load();
+                    }
+                  }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            
             <video
               ref={videoRef}
               src={fixedVideoUrl}
               className="w-full h-full object-contain cursor-pointer"
+              controls
+              controlsList="nodownload"
+              crossOrigin="anonymous"
+              playsInline
               onPlay={handleVideoPlay}
               onPause={handleVideoPause}
-              onClick={handlePlayPause}
-              preload="metadata"
+              onError={handleVideoError}
+              onLoadedData={handleVideoLoaded}
+              preload="auto"
             />
             
-            {/* Video Controls Overlay */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handlePlayPause}
-                    className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-all"
-                  >
-                    {isPlaying ? (
-                      <div className="w-0 h-0 border-x-[6px] border-x-transparent border-l-[8px] border-l-white ml-0.5" />
-                    ) : (
-                      <div className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={handleMute}
-                    className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-all"
-                  >
-                    {isMuted ? (
-                      <VolumeX className="w-4 h-4" />
-                    ) : (
-                      <Volume2 className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-                
-                <button
-                  onClick={handleFullscreen}
-                  className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm flex items-center justify-center text-white transition-all"
-                >
-                  <Maximize2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            
-            {/* Play Overlay */}
-            {!isPlaying && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-all">
-                <div className="w-16 h-16 rounded-full bg-white/30 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform">
-                  <div className="w-0 h-0 border-y-[10px] border-y-transparent border-l-[16px] border-l-white ml-1" />
-                </div>
-              </div>
-            )}
+            {/* Fullscreen button (top right) */}
+            <button
+              onClick={handleFullscreen}
+              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm flex items-center justify-center text-white transition-all opacity-0 group-hover:opacity-100 z-20"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
           </div>
           
           {/* Download Section */}
           <div className="flex justify-between items-center mt-3">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-muted-foreground">
-                {video.duration ? `Duration: ${video.duration}s` : "Ready to download"}
+                {video.duration ? `Duration: ${video.duration}s` : "Ready to view & download"}
               </span>
             </div>
             
@@ -298,17 +297,37 @@ export default function VideoCard({
         </div>
       )}
 
+      {/* Fullscreen Overlay */}
+      {isFullscreen && isReady && fixedVideoUrl && (
+        <div className="fixed inset-0 z-50 bg-black flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setIsFullscreen(false); }}>
+          <button
+            onClick={() => setIsFullscreen(false)}
+            className="absolute top-4 right-4 z-50 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm flex items-center justify-center text-white transition-all"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <video
+            src={fixedVideoUrl}
+            className="max-w-full max-h-full object-contain"
+            controls
+            autoPlay
+            crossOrigin="anonymous"
+            playsInline
+          />
+        </div>
+      )}
+
       {/* Generating State Skeleton */}
       {isGenerating && !isError && (
         <div className="p-4 pt-0">
-          <div className="rounded-xl bg-gradient-to-br from-muted/50 to-muted/30 aspect-[9/16] max-h-96 mx-auto flex flex-col items-center justify-center gap-3">
+          <div className="rounded-xl bg-linear-to-br from-muted/50 to-muted/30 aspect-9/16 max-h-96 mx-auto flex flex-col items-center justify-center gap-3">
             <div className="relative">
               <div className="w-16 h-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground text-center max-w-[200px]">
+            <p className="text-xs text-muted-foreground text-center max-w-50">
               {isRetrying 
                 ? `Retry attempt ${attempts}/${maxRetryAttempts}...` 
                 : "Crafting your cinematic property video..."}

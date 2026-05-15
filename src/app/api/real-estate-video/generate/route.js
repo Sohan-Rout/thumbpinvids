@@ -413,12 +413,25 @@ function buildVideoPrompt(script, voicePrompt, language = "hindi") {
   // A cinematic prompt is typically longer and contains camera/action language.
   const isCinematicPrompt = script.length > 120 || /camera|push.in|pull.back|rack focus|dolly|handheld|whip.pan|presenter|shot/i.test(script);
 
+  const CAMERA_RULES = `CAMERA MOVEMENT RULES (CRITICAL — REAL ESTATE STYLE):
+- ❌ NEVER zoom into the presenter's face — no close-up face shots
+- ❌ NEVER use aggressive zoom, whip-pan, or shaky handheld camera
+- ❌ NEVER crop tight on the presenter — always show the property environment
+- ✅ Keep the presenter at MEDIUM to WIDE framing — the property is the star
+- ✅ Use SLOW, SMOOTH, ELEGANT camera movements — think luxury real estate cinematography
+- ✅ Steadicam-style tracking: slow lateral dolly, gentle push-in from wide, subtle tracking
+- ✅ Camera speed: very slow and deliberate — like a high-end property showcase
+- ✅ If following the presenter walking, maintain consistent medium-wide distance
+- ✅ Subtle depth-of-field: presenter sharp, property environment slightly soft but visible`;
+
   if (isCinematicPrompt) {
-    // The script IS already a director's brief — wrap with realism tokens only
+    // The script IS already a director's brief — wrap with realism tokens and camera rules
     return `Ultra-realistic real estate property showcase video in 9:16 portrait format for Instagram Reels / YouTube Shorts.
 
 CINEMATIC DIRECTION:
 ${script}
+
+${CAMERA_RULES}
 
 ${VOICE_LINE}
 
@@ -455,9 +468,14 @@ ${AUDIO_REALISM}
 VISUAL STYLE:
 - Cinematic real estate video quality — premium feel
 - Warm, golden natural lighting
-- Slight camera movement — slow subtle drift or pan
+- SLOW, SMOOTH camera movement only — gentle drift, slow dolly, subtle pan
+- ❌ NO zoom to face, NO close-ups of the presenter, NO aggressive camera moves
+- ✅ MEDIUM to WIDE framing — always show the property environment around the presenter
 - Shallow depth of field — presenter sharp, background slightly softer
 - Color grading: warm, aspirational, premium
+- Think: luxury real estate cinematography, Steadicam-style elegance
+
+${CAMERA_RULES}
 
 ${REALISM_FOOTER}`;
 }

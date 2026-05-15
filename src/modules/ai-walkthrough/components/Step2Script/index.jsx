@@ -2,14 +2,13 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { FileText, Loader2, PenLine, Sparkles, RotateCcw, Clock, Video } from "lucide-react";
+import { FileText, Loader2, PenLine, Sparkles, RotateCcw, ArrowRight, ArrowLeft, Video } from "lucide-react";
 import { LANGUAGES, TONES, MAX_SCRIPT } from "@/utils/constants";
 
 export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onGenerate, isValid }) => {
   const {
     selectedCompositeArray,
     batchSize,
-    isBatchMode,
   } = compositesHook;
 
   const {
@@ -22,23 +21,24 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
     allowEmotionTags,
     setAllowEmotionTags,
     generatingScript,
-    structuredScripts, // Now contains 2 scripts (short + long)
+    structuredScripts,
     setStructuredScripts,
     setBatchScripts,
-    sharedVoicePrompt,
+    manualScripts,
+    useManualForIndex,
+    toggleManualForIndex,
+    updateManualScript,
+    getFinalScripts,
     handleGenerateScript,
     retryScriptGeneration,
-    regenerateSingleScript, // New function for regenerating individual script
+    regenerateSingleScript,
   } = scriptHook;
 
   const { generating } = videoHook;
 
-  // Get the two script types
-  const shortScript = structuredScripts?.find(s => s?.type === "short_form");
-  const longScript = structuredScripts?.find(s => s?.type === "long_form");
-  const canGenerateFinalVideos =
-    (shortScript?.fullScript || "").trim().length >= 15 &&
-    (longScript?.fullScript || "").trim().length >= 15;
+  const N = selectedCompositeArray.length;
+  const hasScripts = structuredScripts.length > 0;
+  const canGenerateFinalVideos = scriptHook.isStep2Valid(N);
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -142,9 +142,9 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
         className={`w-full cursor-pointer text-sm h-11 transition-all ${generatingScript ? 'bg-primary/5' : 'hover:bg-primary/5 hover:border-primary/50'}`}
       >
         {generatingScript ? (
-          <><Loader2 className="w-4 h-4 mr-2 animate-spin text-primary" /> Crafting Professional Scripts...</>
+          <><Loader2 className="w-4 h-4 mr-2 animate-spin text-primary" /> Crafting {N} Script{N > 1 ? 's' : ''} with Continuation...</>
         ) : (
-          <><Sparkles className="w-4 h-4 mr-2 text-primary" /> ✨ Generate 2 Scripts (Short + Long)</>
+          <><Sparkles className="w-4 h-4 mr-2 text-primary" /> ✨ Generate {N} Script{N > 1 ? 's' : ''} (1 per Composite){N > 1 ? ' with Transitions' : ''}</>
         )}
       </Button>
 
@@ -154,17 +154,18 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           <div className="rounded-xl border border-dashed border-border/60 p-8 flex flex-col items-center justify-center gap-3 bg-muted/20">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
             <div className="space-y-1 text-center">
-              <p className="text-sm font-medium">AI is writing your scripts...</p>
-              <p className="text-[10px] text-muted-foreground">Using {selectedCompositeArray.length} reference angles for accuracy</p>
+              <p className="text-sm font-medium">AI is writing {N} script{N > 1 ? 's' : ''} with continuation...</p>
+              <p className="text-[10px] text-muted-foreground">Creating a seamless walkthrough narrative across {N} clip{N > 1 ? 's' : ''}</p>
             </div>
           </div>
-          <div className="h-30 rounded-xl bg-muted/40 animate-pulse" />
-          <div className="h-45 rounded-xl bg-muted/40 animate-pulse" />
+          {Array.from({ length: N }).map((_, i) => (
+            <div key={i} className="h-30 rounded-xl bg-muted/40 animate-pulse" />
+          ))}
         </div>
       )}
 
       {/* Empty State / Not Generated yet */}
-      {!generatingScript && !shortScript && !longScript && (
+      {!generatingScript && !hasScripts && (
         <div className="rounded-xl border-2 border-dashed border-border/40 p-10 flex flex-col items-center justify-center gap-4 bg-muted/10">
           <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
             <Sparkles className="w-6 h-6 text-primary" />
@@ -172,111 +173,154 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           <div className="text-center space-y-1">
             <p className="text-sm font-semibold">No scripts generated yet</p>
             <p className="text-xs text-muted-foreground max-w-60 mx-auto">
-              Click the button above to generate professional short and long form scripts for your videos.
+              {N > 1 
+                ? `Generate ${N} scripts — one per composite — with smooth avatar transitions between clips.`
+                : "Click the button above to generate a professional script for your video."
+              }
             </p>
           </div>
         </div>
       )}
 
-      {/* Short Script (8-10 seconds) */}
-      {(shortScript || (generatingScript && structuredScripts.length > 0)) && (
-        <div className={`rounded-xl border transition-all overflow-hidden ${shortScript ? 'border-primary/30 bg-primary/5' : 'border-border/50 bg-muted/10 opacity-50'}`}>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-primary/20 bg-primary/10">
-            <Clock className="w-3.5 h-3.5 text-primary" />
-            <Badge className="bg-primary text-white border-0 text-[10px]">8-10 Seconds</Badge>
-            <span className="text-xs font-semibold">Short Script</span>
-            {shortScript && (
-              <span className="text-[10px] text-muted-foreground ml-auto">
-                {shortScript.wordCount || shortScript.fullScript.split(/\s+/).length} words
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => regenerateSingleScript?.(0, "short_form")}
-              disabled={generatingScript}
-              className="h-6 px-2 text-[10px] cursor-pointer hover:bg-primary/20"
-            >
-              <RotateCcw className="w-3 h-3 mr-1" /> {generatingScript ? "Regenerating..." : "Regenerate"}
-            </Button>
-          </div>
-          <div className="p-3">
-            <Textarea
-              value={shortScript?.fullScript || ""}
-              onChange={(e) => {
-                setStructuredScripts((prev) => {
-                  const updated = [...prev];
-                  const index = updated.findIndex(s => s?.type === "short_form");
-                  if (index >= 0) {
-                    updated[index] = { ...updated[index], fullScript: e.target.value };
-                  }
-                  return updated;
-                });
-                setBatchScripts((bs) => {
-                  const b = [...bs];
-                  b[0] = e.target.value;
-                  return b;
-                });
-              }}
-              className="min-h-25 resize-none text-sm bg-background border-primary/10 focus-visible:ring-primary/30"
-              placeholder="Short script (8-10 seconds)"
-            />
-            <p className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
-              <Sparkles className="w-2.5 h-2.5" /> Fast-paced, hook-heavy script for short-form video
-            </p>
+      {/* Continuation Flow Info */}
+      {hasScripts && N > 1 && (
+        <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 flex gap-2.5">
+          <span className="text-base shrink-0">🎬</span>
+          <div className="text-xs text-muted-foreground leading-relaxed">
+            <strong className="text-foreground">Continuation Mode:</strong> Each clip flows into the next — avatar exits right at the end and enters from the left in the next clip. Same voice, same outfit, seamless walkthrough.
           </div>
         </div>
       )}
 
-      {/* Long Script (45-60 seconds) */}
-      {(longScript || (generatingScript && structuredScripts.length > 0)) && (
-        <div className={`rounded-xl border transition-all overflow-hidden ${longScript ? 'border-border/50 bg-card/40' : 'border-border/30 bg-muted/10 opacity-50'}`}>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-card/60">
-            <Video className="w-3.5 h-3.5 text-primary" />
-            <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">45-60 Seconds</Badge>
-            <span className="text-xs font-semibold">Full Walkthrough Script</span>
-            {longScript && (
-              <span className="text-[10px] text-muted-foreground ml-auto">
-                {longScript.wordCount || longScript.fullScript.split(/\s+/).length} words
-              </span>
+      {/* Per-Composite Script Cards */}
+      {(hasScripts || (generatingScript && structuredScripts.length > 0)) && structuredScripts.map((clipScript, i) => {
+        const isManual = useManualForIndex[i];
+        const composite = selectedCompositeArray[i];
+        const isFirst = i === 0;
+        const isLast = i === N - 1;
+        const positionLabel = N === 1 ? "Single Clip" : isFirst ? "Opening" : isLast ? "Closing" : `Middle (${i}/${N - 1})`;
+        const transitionInfo = N > 1 
+          ? isFirst 
+            ? "→ Avatar exits right at end" 
+            : isLast 
+            ? "← Avatar enters from left" 
+            : "← Enters left → Exits right"
+          : null;
+
+        return (
+          <div key={i} className={`rounded-xl border transition-all overflow-hidden ${
+            isFirst ? 'border-primary/30 bg-primary/5' : isLast ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border/50 bg-card/40'
+          }`}>
+            {/* Header */}
+            <div className={`flex items-center gap-2 px-3 py-2 border-b ${
+              isFirst ? 'border-primary/20 bg-primary/10' : isLast ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-border/30 bg-card/60'
+            }`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                isFirst ? 'gradient-bg text-white' : isLast ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground'
+              }`}>
+                {i + 1}
+              </div>
+              <Badge variant={isFirst ? "default" : "outline"} className={`text-[10px] ${isFirst ? 'bg-primary text-white border-0' : ''}`}>
+                {positionLabel}
+              </Badge>
+              {transitionInfo && (
+                <span className="text-[9px] text-violet-600 dark:text-violet-400 flex items-center gap-0.5">
+                  {transitionInfo}
+                </span>
+              )}
+              {clipScript && (
+                <span className="text-[10px] text-muted-foreground ml-auto">
+                  {(clipScript.fullScript || "").split(/\s+/).length} words
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => regenerateSingleScript?.(i)}
+                disabled={generatingScript}
+                className="h-6 px-2 text-[10px] cursor-pointer hover:bg-primary/20"
+              >
+                <RotateCcw className="w-3 h-3 mr-1" /> Regen
+              </Button>
+            </div>
+
+            {/* Composite Preview */}
+            {composite && (
+              <div className="px-3 pt-2 flex items-center gap-2">
+                <img src={composite.url} alt={composite.title} className="w-8 h-11 rounded-lg object-cover border border-border" />
+                <p className="text-[10px] text-muted-foreground">{composite.title || `Composite ${i + 1}`}</p>
+              </div>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => regenerateSingleScript?.(1, "long_form")}
-              disabled={generatingScript}
-              className="h-6 px-2 text-[10px] cursor-pointer hover:bg-card-foreground/10"
-            >
-              <RotateCcw className="w-3 h-3 mr-1" /> {generatingScript ? "Regenerating..." : "Regenerate"}
-            </Button>
+
+            {/* Script Mode Toggle: AI vs Manual */}
+            <div className="px-3 pt-2 flex items-center gap-2">
+              <button
+                onClick={() => toggleManualForIndex(i)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
+                  !isManual ? 'gradient-bg text-white' : 'border border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                <Sparkles className="w-2.5 h-2.5" /> AI Script
+              </button>
+              <button
+                onClick={() => toggleManualForIndex(i)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
+                  isManual ? 'gradient-bg text-white' : 'border border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                <PenLine className="w-2.5 h-2.5" /> Manual Script
+              </button>
+              {isManual && (
+                <span className="text-[9px] text-amber-600 dark:text-amber-400 ml-auto">✏️ Manual has priority</span>
+              )}
+            </div>
+
+            {/* Script Textarea */}
+            <div className="p-3">
+              {isManual ? (
+                <>
+                  <Textarea
+                    value={manualScripts[i] || ""}
+                    onChange={(e) => updateManualScript(i, e.target.value)}
+                    className="min-h-25 resize-none text-sm bg-background border-amber-500/20 focus-visible:ring-amber-500/30"
+                    placeholder={`Write your own script for clip ${i + 1}... This will be used as the Veo prompt directly.`}
+                  />
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2 flex items-center gap-1">
+                    <PenLine className="w-2.5 h-2.5" /> Your manual script will be used for this clip (preferred over AI)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Textarea
+                    value={clipScript?.fullScript || ""}
+                    onChange={(e) => {
+                      setStructuredScripts((prev) => {
+                        const updated = [...prev];
+                        if (updated[i]) {
+                          updated[i] = { ...updated[i], fullScript: e.target.value };
+                        }
+                        return updated;
+                      });
+                      setBatchScripts((bs) => {
+                        const b = [...bs];
+                        b[i] = e.target.value;
+                        return b;
+                      });
+                    }}
+                    className={`min-h-25 resize-none text-sm bg-background ${
+                      isFirst ? 'border-primary/10 focus-visible:ring-primary/30' : 'border-border/50 focus-visible:ring-primary/20'
+                    }`}
+                    placeholder={`AI-generated script for clip ${i + 1}...`}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5" /> {isFirst ? "Opening hook — grab attention instantly" : isLast ? "Closing clip — end with confidence" : "Walkthrough continues naturally from previous clip"}
+                  </p>
+                </>
+              )}
+            </div>
           </div>
-          <div className="p-3">
-            <Textarea
-              value={longScript?.fullScript || ""}
-              onChange={(e) => {
-                setStructuredScripts((prev) => {
-                  const updated = [...prev];
-                  const index = updated.findIndex(s => s?.type === "long_form");
-                  if (index >= 0) {
-                    updated[index] = { ...updated[index], fullScript: e.target.value };
-                  }
-                  return updated;
-                });
-                setBatchScripts((bs) => {
-                  const b = [...bs];
-                  b[1] = e.target.value;
-                  return b;
-                });
-              }}
-              className="min-h-37.5 resize-none text-sm bg-background border-border/50 focus-visible:ring-primary/20"
-              placeholder="Full script (45-60 seconds)"
-            />
-            <p className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
-              <Sparkles className="w-2.5 h-2.5" /> Narrative script that references different angles naturally
-            </p>
-          </div>
-        </div>
-      )}
+        );
+      })}
 
       {/* Actions */}
       <div className="flex justify-between items-center pt-4 border-t border-border/50">
@@ -284,7 +328,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
           Back
         </Button>
         <div className="flex gap-3">
-          {(shortScript || longScript) && (
+          {hasScripts && (
             <Button 
               variant="outline" 
               size="sm" 
@@ -293,7 +337,7 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
               disabled={generatingScript}
             >
               <RotateCcw className={`w-3.5 h-3.5 ${generatingScript ? 'animate-spin' : ''}`} /> 
-              Regenerate Both
+              Regenerate All
             </Button>
           )}
           <Button 
@@ -302,9 +346,9 @@ export const Step2Script = ({ compositesHook, scriptHook, videoHook, onBack, onG
             className="gradient-bg text-white shadow-lg cursor-pointer px-10 h-10 font-semibold"
           >
             {generating ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating Videos...</>
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating {N} Video{N > 1 ? 's' : ''}...</>
             ) : (
-              <><Video className="w-4 h-4 mr-2" /> Generate Final Videos</>
+              <><Video className="w-4 h-4 mr-2" /> Generate {N} Video{N > 1 ? 's' : ''}</>
             )}
           </Button>
         </div>

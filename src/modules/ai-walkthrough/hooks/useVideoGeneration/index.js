@@ -19,7 +19,7 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
   const [combineProgress, setCombineProgress] = useState("");
   const [combinedVideo, setCombinedVideo] = useState(null);
 
-  const { script, batchScripts, structuredScripts, sharedVoicePrompt, setSharedVoicePrompt, isBatchMode, language } = scriptHook;
+  const { script, batchScripts, structuredScripts, sharedVoicePrompt, setSharedVoicePrompt, isBatchMode, language, getFinalScripts } = scriptHook;
 
   // Cleanup function after successful generation
   const cleanupSessionData = async (keepPropertyImages = true, keepAvatars = true) => {
@@ -107,13 +107,15 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
 
   const handleGenerateVideo = async () => {
     const comps = selectedCompositeArray;
-    const scripts = isBatchMode
-      ? (structuredScripts.length > 0
+    
+    // Use getFinalScripts which respects manual/AI toggle per composite
+    const scripts = getFinalScripts 
+      ? getFinalScripts() 
+      : (structuredScripts.length > 0
           ? structuredScripts.map((s) => s.fullScript || "")
           : batchScripts.length > 0
             ? batchScripts
-            : (script.trim() ? [script, script] : []))
-      : [script];
+            : [script]);
     
     if (comps.length === 0 || scripts.some((s) => !s?.trim())) return;
 
@@ -153,13 +155,13 @@ export const useVideoGeneration = (selectedCompositeArray, scriptHook, sessionId
 
   const retryVideoGeneration = async (videoIndex) => {
     const comps = selectedCompositeArray;
-    const scripts = isBatchMode
-      ? (structuredScripts.length > 0
+    const scripts = getFinalScripts
+      ? getFinalScripts()
+      : (structuredScripts.length > 0
           ? structuredScripts.map((s) => s.fullScript || "")
           : batchScripts.length > 0
             ? batchScripts
-            : (script.trim() ? [script, script] : []))
-      : [script];
+            : [script]);
     
     if (!comps[videoIndex] || !scripts[videoIndex]) return;
     

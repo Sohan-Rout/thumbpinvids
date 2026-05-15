@@ -7,23 +7,67 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
   const [script, setScript] = useState("");
   const [batchScripts, setBatchScripts] = useState([]);
   const [structuredScripts, setStructuredScripts] = useState([]);
+  // Manual scripts: user-written scripts per composite (indexed by composite position)
+  const [manualScripts, setManualScripts] = useState([]);
+  // Whether to use manual script for each index (true = use manual, false = use AI)
+  const [useManualForIndex, setUseManualForIndex] = useState([]);
   const [sharedVoicePrompt, setSharedVoicePrompt] = useState("");
   const [language, setLanguage] = useState("hindi");
   const [scriptTone, setScriptTone] = useState("professional");
   const [allowEmotionTags, setAllowEmotionTags] = useState(true);
   const [generatingScript, setGeneratingScript] = useState(false);
   
-  // We always want exactly 2 scripts (short & long) regardless of composite count
-  const TARGET_SCRIPT_COUNT = 2;
-  const isBatchMode = true; // Force batch mode to always generate multiple scripts
+  // Dynamic: one script per selected composite
+  const isBatchMode = selectedCompositeArray.length > 1;
 
-  const isStep2Valid = () => {
-    const scriptsToCheck = structuredScripts.length > 0
-      ? structuredScripts
-      : batchScripts.map((fullScript, idx) => ({ fullScript, id: idx }));
+  const isStep2Valid = (compositeCount) => {
+    const count = compositeCount || selectedCompositeArray.length;
+    if (count === 0) return false;
+    
+    // Check we have enough scripts (AI or manual) for each composite
+    for (let i = 0; i < count; i++) {
+      const isManual = useManualForIndex[i];
+      if (isManual) {
+        if (!(manualScripts[i] || "").trim() || manualScripts[i].trim().length < 15) return false;
+      } else {
+        const aiScript = structuredScripts[i];
+        if (!aiScript || (aiScript.fullScript || "").trim().length < 15) return false;
+      }
+    }
+    return true;
+  };
+  
+  // Get the final script for each composite (AI or manual, with manual having preference)
+  const getFinalScripts = () => {
+    const count = selectedCompositeArray.length;
+    const finals = [];
+    for (let i = 0; i < count; i++) {
+      const isManual = useManualForIndex[i];
+      if (isManual && (manualScripts[i] || "").trim().length > 0) {
+        finals.push(manualScripts[i].trim());
+      } else if (structuredScripts[i]) {
+        finals.push(structuredScripts[i].fullScript || "");
+      } else {
+        finals.push("");
+      }
+    }
+    return finals;
+  };
 
-    return scriptsToCheck.length === TARGET_SCRIPT_COUNT &&
-      scriptsToCheck.every((s) => (s.fullScript || "").trim().length >= 15);
+  const toggleManualForIndex = (idx) => {
+    setUseManualForIndex(prev => {
+      const next = [...prev];
+      next[idx] = !next[idx];
+      return next;
+    });
+  };
+
+  const updateManualScript = (idx, text) => {
+    setManualScripts(prev => {
+      const next = [...prev];
+      next[idx] = text;
+      return next;
+    });
   };
 
   const handleGenerateScript = async () => {
@@ -71,14 +115,20 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
         .join(", ");
       fd.append("availableAngles", availableAngles);
       
-      // Add user intent if provided
+      // Add user intent if provided (shared across all)
       if (script.trim()) {
         fd.append("userIntent", script.trim());
       }
       
-      // Force generation of exactly 2 scripts (short & long)
-      fd.append("scriptTypes", JSON.stringify(["short_form", "long_form"]));
-      fd.append("targetScriptCount", String(TARGET_SCRIPT_COUNT));
+      // Per-composite manual intents (these get preference in script generation)
+      for (let i = 0; i < selectedCompositeArray.length; i++) {
+        if (manualScripts[i] && manualScripts[i].trim()) {
+          fd.append(`userIntent_${i}`, manualScripts[i].trim());
+        }
+      }
+      
+      // Enable continuation mode for visual flow between clips
+      fd.append("continuationMode", "true");
       
       const res = await fetch("/api/real-estate-video/generate-script", { 
         method: "POST", 
@@ -88,84 +138,72 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Script generation failed");
       
-      // Process the response - expect exactly 2 scripts
+      // Process the response - expect N scripts (one per composite)
+      const N = selectedCompositeArray.length;
       let generatedScripts = [];
       
       if (data.scripts && Array.isArray(data.scripts)) {
-        // Batch API returns [{hook, walkthrough, cta, fullScript}, ...] without type/id/title
-        // Normalize: first = short_form, second = long_form
+        // Batch API returns [{hook, walkthrough, cta, fullScript}, ...]
         generatedScripts = data.scripts.map((s, idx) => ({
           id: idx,
-          type: idx === 0 ? "short_form" : "long_form",
-          title: idx === 0 ? "Short Video (15-30s)" : "Full Video (45-60s)",
-          duration: idx === 0 ? "short" : "long",
+          type: `clip_${idx + 1}`,
+          title: `Clip ${idx + 1} of ${data.scripts.length}`,
+          compositeIndex: idx,
+          position: idx === 0 ? "first" : idx === data.scripts.length - 1 ? "last" : "middle",
           hook: (s.hook || "").trim(),
           walkthrough: (s.walkthrough || "").trim(),
           cta: (s.cta || "").trim(),
           fullScript: (s.fullScript || [s.hook, s.walkthrough, s.cta].filter(Boolean).join(" ")).trim(),
-          references: selectedCompositeArray.length,
+          references: N,
         }));
-      } else if (data.shortScript && data.longScript) {
-        // Handle separate short/long responses
-        generatedScripts = [
-          {
-            id: 0,
-            type: "short_form",
-            title: "Short Video (15-30s)",
-            duration: "short",
-            fullScript: data.shortScript,
-            references: selectedCompositeArray.length
-          },
-          {
-            id: 1,
-            type: "long_form", 
-            title: "Full Video (45-60s)",
-            duration: "long",
-            fullScript: data.longScript,
-            references: selectedCompositeArray.length
-          }
-        ];
       } else if (data.script) {
-        // Single script response - duplicate for both types?
-        generatedScripts = [
-          {
-            id: 0,
-            type: "short_form",
-            title: "Short Video (15-30s)",
-            duration: "short",
-            fullScript: data.script.fullScript || data.script,
-            references: selectedCompositeArray.length
-          },
-          {
-            id: 1,
-            type: "long_form",
-            title: "Full Video (45-60s)", 
-            duration: "long",
-            fullScript: data.script.fullScript || data.script,
-            references: selectedCompositeArray.length
-          }
-        ];
+        // Single script response
+        generatedScripts = [{
+          id: 0,
+          type: "clip_1",
+          title: "Clip 1 of 1",
+          compositeIndex: 0,
+          position: "only",
+          fullScript: data.script.fullScript || data.script,
+          hook: data.script.hook || "",
+          walkthrough: data.script.walkthrough || "",
+          cta: data.script.cta || "",
+          references: 1,
+        }];
       }
       
-      // Ensure we have exactly 2 scripts
-      if (generatedScripts.length !== TARGET_SCRIPT_COUNT) {
-        console.warn(`Expected ${TARGET_SCRIPT_COUNT} scripts, got ${generatedScripts.length}`);
-        // Pad with defaults if needed
-        while (generatedScripts.length < TARGET_SCRIPT_COUNT) {
-          generatedScripts.push({
-            id: generatedScripts.length,
-            type: generatedScripts.length === 0 ? "short_form" : "long_form",
-            title: generatedScripts.length === 0 ? "Short Video" : "Full Video",
-            fullScript: "Discover this amazing property with stunning features and modern amenities.",
-            references: selectedCompositeArray.length
-          });
-        }
+      // Ensure we have the right number of scripts
+      while (generatedScripts.length < N) {
+        generatedScripts.push({
+          id: generatedScripts.length,
+          type: `clip_${generatedScripts.length + 1}`,
+          title: `Clip ${generatedScripts.length + 1} of ${N}`,
+          compositeIndex: generatedScripts.length,
+          position: generatedScripts.length === N - 1 ? "last" : "middle",
+          fullScript: "Discover this amazing property with stunning features and modern amenities.",
+          references: N,
+        });
       }
+      
+      // Trim to exactly N
+      generatedScripts = generatedScripts.slice(0, N);
       
       setStructuredScripts(generatedScripts);
       setBatchScripts(generatedScripts.map(s => s.fullScript));
       
-      toast.success(`Generated ${generatedScripts.length} scripts (Short + Long)!`);
+      // Initialize manual scripts array with empty strings if not already set
+      setManualScripts(prev => {
+        const next = [...prev];
+        while (next.length < N) next.push("");
+        return next;
+      });
+      setUseManualForIndex(prev => {
+        const next = [...prev];
+        while (next.length < N) next.push(false);
+        return next;
+      });
+      
+      toast.success(`Generated ${generatedScripts.length} script${generatedScripts.length > 1 ? 's' : ''} with continuation flow!`);
       
     } catch (err) {
       console.error("Script generation error:", err);
@@ -175,9 +213,9 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
     }
   };
 
-  const regenerateSingleScript = async (scriptIndex, type) => {
-    // Regenerate just one script (short or long) while keeping the other
-    if (!selectedCompositeArray.length) return;
+  const regenerateSingleScript = async (scriptIndex) => {
+    // Regenerate just one clip's script while keeping the others
+    if (!selectedCompositeArray.length || !selectedCompositeArray[scriptIndex]) return;
     
     setGeneratingScript(true);
     
@@ -199,14 +237,22 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
       fd.append("language", language);
       fd.append("tone", scriptTone);
       fd.append("allowEmotionTags", String(allowEmotionTags));
-      fd.append("scriptType", type);
       
-      for (let i = 0; i < selectedCompositeArray.length; i++) {
-        fd.append(`compositeImage_${i}`, selectedCompositeArray[i].file);
-      }
+      // Single composite for single regeneration
+      fd.append("compositeImage", selectedCompositeArray[scriptIndex].file);
+      
+      // Include position context for continuation
+      const N = selectedCompositeArray.length;
+      const position = scriptIndex === 0 ? "first" : scriptIndex === N - 1 ? "last" : "middle";
+      fd.append("clipPosition", position);
+      fd.append("clipIndex", String(scriptIndex));
+      fd.append("totalClips", String(N));
       
       if (script.trim()) {
         fd.append("userIntent", script.trim());
+      }
+      if (manualScripts[scriptIndex]?.trim()) {
+        fd.append("userIntent", manualScripts[scriptIndex].trim());
       }
       
       const res = await fetch("/api/real-estate-video/generate-script", { 
@@ -219,11 +265,15 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
       
       const newScript = {
         id: scriptIndex,
-        type: type,
-        title: type === "short_form" ? "Short Video (15-30s)" : "Full Video (45-60s)",
-        duration: type === "short_form" ? "short" : "long",
-        fullScript: data.script?.fullScript || data.script || data,
-        references: selectedCompositeArray.length
+        type: `clip_${scriptIndex + 1}`,
+        title: `Clip ${scriptIndex + 1} of ${N}`,
+        compositeIndex: scriptIndex,
+        position,
+        fullScript: data.script?.fullScript || data.script || "",
+        hook: data.script?.hook || "",
+        walkthrough: data.script?.walkthrough || "",
+        cta: data.script?.cta || "",
+        references: N,
       };
       
       setStructuredScripts(prev => {
@@ -238,7 +288,7 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
         return updated;
       });
       
-      toast.success(`${type === "short_form" ? "Short" : "Long"} script regenerated!`);
+      toast.success(`Clip ${scriptIndex + 1} script regenerated!`);
       
     } catch (err) {
       toast.error("Script regeneration failed", { description: err.message });
@@ -258,6 +308,13 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
     setBatchScripts,
     structuredScripts,
     setStructuredScripts,
+    manualScripts,
+    setManualScripts,
+    useManualForIndex,
+    setUseManualForIndex,
+    toggleManualForIndex,
+    updateManualScript,
+    getFinalScripts,
     sharedVoicePrompt,
     setSharedVoicePrompt,
     language,
@@ -267,10 +324,10 @@ export const useScript = (selectedCompositeArray, propertyBrief) => {
     allowEmotionTags,
     setAllowEmotionTags,
     generatingScript,
-    isBatchMode: true, // Always true since we always generate 2 scripts
+    isBatchMode,
     isStep2Valid,
     handleGenerateScript,
-    regenerateSingleScript, // New: regenerate individual script
+    regenerateSingleScript,
     retryScriptGeneration,
   };
 };
