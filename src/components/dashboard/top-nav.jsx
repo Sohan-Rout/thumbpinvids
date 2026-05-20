@@ -9,6 +9,7 @@ import {
   LayoutDashboard, 
   FolderOpen, 
   Clock, 
+  Clapperboard,
   User as UserIcon,
   LogOut,
   ChevronDown,
@@ -39,6 +40,7 @@ export function TopNav() {
     { label: "Dashboard", href: "/app", icon: LayoutDashboard },
     { label: "Library", href: "/app/assets", icon: FolderOpen },
     { label: "History", href: "/app/history", icon: Clock },
+    { label: "Long Ad", href: "/app/veo-long-ad", icon: Clapperboard, beta: true },
   ];
 
   return (
@@ -61,13 +63,18 @@ export function TopNav() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`text-[13px] font-medium transition-colors ${
+                  className={`flex items-center gap-1.5 text-[13px] font-medium transition-colors ${
                     isActive 
                       ? "text-primary" 
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {item.label}
+                  {item.beta && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-300/30 leading-none">
+                      BETA
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -106,6 +113,11 @@ export function TopNav() {
               >
                 <item.icon className="w-4 h-4" />
                 {item.label}
+                {item.beta && (
+                  <span className="ml-auto px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-300/30">
+                    BETA
+                  </span>
+                )}
               </Link>
             ))}
             <div className="pt-2 border-t border-border/20">
