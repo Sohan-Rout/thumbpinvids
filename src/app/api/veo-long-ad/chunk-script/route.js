@@ -81,10 +81,10 @@ export async function POST(request) {
     }
 
     const locationDataArr = locationImages.length > 0
-      ? await Promise.all(locationImages.slice(0, 5).map(fileToBase64))
+      ? await Promise.all(locationImages.slice(0, 1).map(fileToBase64))
       : [];
     const avatarDataArr = avatarImages.length > 0
-      ? await Promise.all(avatarImages.slice(0, 3).map(fileToBase64))
+      ? await Promise.all(avatarImages.slice(0, 1).map(fileToBase64))
       : [];
 
     const ai = new GoogleGenAI({ apiKey });
@@ -119,8 +119,9 @@ VEO PROMPT FORMAT FOR EACH CHUNK (follow this structure exactly):
 🎬 VEO 3.1 PROMPT — CHUNK [N] OF [TOTAL] (8 SEC, ${langName.toUpperCase()})
 
 🎭 CHARACTER (from reference image):
-• [Brief character description from avatar image — age, appearance, styling, expression]
-• Speaking directly to camera with confident real-estate creator energy
+• [Brief character description from avatar image — age, appearance, styling, expression. Describe their hair, clothing, and features matching the reference photo.]
+• Confident real-estate creator energy, speaking directly to camera
+• Extreme photorealistic details: real human skin texture (pores, micro-shadows, natural lines), expressive eyes, no waxy or artificial AI skin look
 • Lip-sync perfectly matched to dialogue
 
 🗣️ DIALOGUE:
@@ -134,14 +135,14 @@ VEO PROMPT FORMAT FOR EACH CHUNK (follow this structure exactly):
   — Mood/lighting beat]
 
 🏠 VISUAL CONTEXT (from property reference images):
-[2–3 sentences describing what should be visible in this chunk, using the actual property. Only EXTERIOR shots: gate, front elevation, balcony, drone angle]
+[2–3 sentences describing the high-end contemporary house shown in the location reference images: white stucco exterior walls, warm natural wood siding cladding, dark black/grey gabled metal roof, clean minimalist modern architectural lines, glass balustrades/railings, luxury landscaping, and soft golden hour or natural lighting. Ground all visuals strictly in the provided location photo.]
 
 ⚠️ STRICT RULES:
-• ONLY exterior shots — NO interior shots at all
-• Match character EXACTLY from reference image
-• NO text, captions, watermarks on screen
-• Ultra-realistic cinematic quality, 9:16 portrait
-• Golden hour lighting, luxury real-estate aesthetic
+• ONLY exterior shots (gate, facade, exterior walls, balcony) — NO interior shots at all
+• Match character EXACTLY from reference image. Preserve natural facial depth and avoid any synthetic, waxy, or artificial look.
+• NO text, captions, overlays, or watermarks on screen
+• Ultra-realistic cinematic quality, 4k editorial photorealism, 9:16 portrait
+• Soft golden hour lighting, luxury real-estate aesthetic
 • Perfect lip-sync mandatory
 
 VOICE DIRECTION:
@@ -183,7 +184,7 @@ IMPORTANT: Return ONLY the structured output above. No extra commentary. Use the
     avatarDataArr.forEach((d) => parts.push({ inlineData: d }));
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: [{ parts }],
     });
 

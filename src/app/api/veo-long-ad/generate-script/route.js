@@ -120,7 +120,7 @@ Hurry! Inventory is limited. For a site visit, click the button below."
 Write the script now. Return ONLY the spoken script text with no headers, no labels, no formatting.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: [{ parts: [{ text: prompt }] }],
     });
 

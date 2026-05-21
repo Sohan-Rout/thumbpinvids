@@ -123,13 +123,36 @@ export async function POST(request) {
       };
     }
 
-    const referenceImages = [];
-    for (const f of [...locationImages.slice(0, 3), ...avatarImages.slice(0, 2)]) {
+    const avatarImgs = [];
+    for (const f of avatarImages.slice(0, 2)) {
       try {
-        const b64 = await fileToBase64(f);
-        referenceImages.push({ image: b64, referenceType: "asset" });
+        avatarImgs.push(await fileToBase64(f));
       } catch (_) {}
     }
+
+    const locationImgs = [];
+    for (const f of locationImages.slice(0, 2)) {
+      try {
+        locationImgs.push(await fileToBase64(f));
+      } catch (_) {}
+    }
+
+    const maxSlots = 3;
+    const avatarSlots = Math.min(avatarImgs.length, maxSlots - 1);
+    const locationSlots = Math.min(locationImgs.length, maxSlots - avatarSlots);
+    console.log(`[VeoLongAd] avatarSlots: ${avatarSlots}, locationSlots: ${locationSlots}`);
+
+    const referenceImages = [
+      ...avatarImgs.slice(0, avatarSlots).map((img) => ({
+        image: img,
+        referenceType: "asset",
+      })),
+      ...locationImgs.slice(0, locationSlots).map((img) => ({
+        image: img,
+        referenceType: "asset",
+      })),
+    ];
+    console.log(`[VeoLongAd] Total referenceImages: ${referenceImages.length}`);
 
     // ── SSE stream ────────────────────────────────────────────────────────────
     const encoder = new TextEncoder();
@@ -221,6 +244,8 @@ export async function POST(request) {
             config: {
               aspectRatio,
               resolution: "720p",
+              durationSeconds: 8,
+              referenceImages,
             },
           });
 
@@ -275,15 +300,16 @@ export async function POST(request) {
 
           if (chunks.length > 1) {
             // Give Veo time to fully "process" the base clip before it can be
-            // used as extension input (avoids INVALID_ARGUMENT "not processed" error)
+            // used as extension input (avoids INVALID_ARGUMENT "not processed" error).
+            // 45s is the empirically safe minimum for Veo 3.1.
             send({
               type: "progress",
               chunkIndex: 0,
               totalChunks,
               status: "extending",
-              message: "⏳ Waiting for base clip to be indexed by Veo (20s)...",
+              message: "⏳ Waiting for base clip to be indexed by Veo (45s)...",
             });
-            await new Promise((r) => setTimeout(r, 20000));
+            await new Promise((r) => setTimeout(r, 45000));
           }
 
           for (let i = 1; i < chunks.length; i++) {
@@ -481,8 +507,9 @@ export async function POST(request) {
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {
@@ -509,7 +536,12 @@ export async function POST(request) {
 }
 
 /**
- * Build the prompt for the FIRST Veo clip (pure text — no reference images, for extension compatibility).
+ * High-quality realism tokens from the master creative SOP.
+ */
+const SKIN_ENHANCER_TOKENS = `Photorealistic detail. Real human skin with visible natural texture, pores, and micro shadows. Preserve natural under-eye detail and realistic lip texture. No airbrushing or waxy finish. Authentic facial structure with natural micro-expressions and eye depth. Lighting behaves naturally with soft highlights and realistic shadows. High-detail editorial realism, grounded in real-world 4k camera capture.`;
+
+/**
+ * Build the prompt for the FIRST Veo clip.
  */
 function buildFirstClipPrompt(chunk, masterVoicePrompt, language) {
   const langMap = {
@@ -520,17 +552,33 @@ function buildFirstClipPrompt(chunk, masterVoicePrompt, language) {
   };
   const langLabel = langMap[language] || "Indian-English";
 
-  return `Cinematic ultra-realistic luxury real estate video ad. 9:16 portrait format for Instagram Reels / YouTube Shorts.
+  return `Cinematic ultra-realistic luxury real estate video ad in 9:16 portrait format for Instagram Reels / YouTube Shorts. High-end cinematic luxury property walkthrough aesthetic, warm natural sunlight, shallow depth of field, 4k editorial photorealistic detail.
 
 ${chunk.veoPrompt || ""}
 
-PRESENTER: Confident, well-dressed professional real estate agent, photorealistic face, natural skin texture and micro-shadows.
-VOICE: ${masterVoicePrompt || "Confident professional Indian real estate presenter, warm authoritative tone, natural delivery, ~140 wpm, dry close-mic studio recording."}
-LANGUAGE: ${langLabel}. Lip movements perfectly synced to dialogue.
-AUDIO: Single presenter voice — dry close-mic studio quality, zero reverb, echo, noise, SFX, or background voices.
-CAMERA: ${chunk.cameraDirection || "Dynamic energetic camera movement toward presenter standing at a luxury property exterior gate"}.
-VISUAL STYLE: High-end cinematic quality, professional color grading, luxury property exterior shot. NO text, NO captions, NO watermarks, NO overlays.
-Must look and feel like a premium professional real estate advertisement.`;}
+PRESENTER IDENTITY BINDING:
+• Strictly match the physical face, hair, gender, features, and clothing of the presenter shown in the presenter/avatar reference images.
+• The presenter is speaking directly to the camera with natural micro-expressions, dynamic facial movement, and realistic eye depth.
+
+ENVIRONMENT BINDING:
+• Strictly match the architectural style, materials, colors, and layout of the contemporary luxury house shown in the property/location reference images.
+• Show premium exterior details: white stucco walls, natural warm wood facade panels, a dark black/grey gabled metal roof, clean modern lines, minimalist glass railings, and elegant landscaping.
+
+${SKIN_ENHANCER_TOKENS}
+
+VOICE DIRECTION:
+• Voice characteristics: ${masterVoicePrompt || "Confident professional Indian real estate presenter, warm authoritative tone, natural delivery, ~140 wpm, dry close-mic studio recording."}
+• Speaking language: ${langLabel}.
+• PERFECT LIP-SYNC: The presenter's lip movements must perfectly sync to the dialogue: "${chunk.text}".
+• Audio quality: Clean dry close-mic recording, absolute studio quality with no echo, reverb, background music, or sound effects.
+
+CAMERA ACTION:
+• Camera: ${chunk.cameraDirection || "Dynamic energetic camera movement toward presenter standing at a luxury property exterior gate"}.
+
+STRICT VISUAL RULES:
+• ONLY exterior shots (gate, facade, exterior walls, balcony, front elevation). NO interior shots.
+• NO text, NO captions, NO watermarks, NO overlays on screen.`;
+}
 
 /**
  * Build the EXTENSION prompt (voice + visual continuity).
@@ -544,20 +592,32 @@ function buildExtensionPrompt(chunk, masterVoicePrompt, language) {
   };
   const langLabel = langMap[language] || "Indian-English";
 
-  return `Continue the SAME video with the SAME presenter, same face, same clothing, same visual style. Maintain cinematic continuity — same location, same lighting, seamless cut.
+  return `SEAMLESS MOTION & VISUAL CONTINUITY: Continue the SAME video with the EXACT SAME presenter and in the EXACT SAME location. Zero visual jumps, zero color shifts, perfect seamless continuation of the scene.
 
 ${chunk.veoPrompt ? `SCENE DIRECTION:\n${chunk.veoPrompt}\n` : ""}
 
-DIALOGUE FOR THIS EXTENSION: "${chunk.text}"
-CAMERA: ${chunk.cameraDirection || "Continue with cinematic exterior shot, presenter walking"}
+PRESENTER VISUAL CONTINUITY:
+• Maintain identical appearance of the presenter: same face, same hair, same clothing, and styling. No variations.
+• Speaking naturally with realistic micro-expressions and eye movement.
 
-VOICE (must remain identical to original): ${masterVoicePrompt || "Keep the same voice characteristics as the original clip."}
-Language: ${langLabel}. Perfect lip-sync matching mandatory.
+ENVIRONMENT VISUAL CONTINUITY:
+• Maintain identical high-end contemporary property setting: white stucco walls, natural wood panels, dark gabled metal roof, and lighting.
+• Keep identical warm golden hour or natural sunlight.
 
-STRICT RULES:
-• Same presenter appearance — NO variation in face, clothing, or style
-• ONLY exterior shots (gate, facade, balcony/drone from outside) — NO interior shots
-• NO text, captions, or watermarks on screen
-• Photorealistic cinematic quality
-• Motion continuity — smooth natural continuation from previous clip`;
+${SKIN_ENHANCER_TOKENS}
+
+DIALOGUE FOR THIS EXTENSION:
+• Dialogue: "${chunk.text}"
+• PERFECT LIP-SYNC: The presenter's lip movements must perfectly sync to this dialogue.
+
+VOICE (must remain identical):
+• Voice style: ${masterVoicePrompt || "Keep the same voice characteristics as the original clip."}
+• Speaking language: ${langLabel}.
+
+CAMERA CONTINUITY:
+• Camera: ${chunk.cameraDirection || "Continue with cinematic exterior shot, presenter walking"}
+
+STRICT VISUAL RULES:
+• ONLY exterior shots. NO interior shots.
+• NO text, NO captions, NO watermarks on screen.`;
 }

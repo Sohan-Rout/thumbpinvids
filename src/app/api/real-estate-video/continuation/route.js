@@ -182,7 +182,7 @@ Return a single paragraph with ALL attributes comma-separated:
 Return ONLY the voice description paragraph. No headers, no explanations.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         contents: [{ parts: [{ text: prompt }, { inlineData: compositeInlineData }] }],
       });
 
@@ -225,7 +225,6 @@ Return ONLY the voice description paragraph. No headers, no explanations.`;
         aspectRatio,
         durationSeconds: 8,
         resolution,
-        personGeneration: "allow_adult",
         referenceImages,
       },
     });

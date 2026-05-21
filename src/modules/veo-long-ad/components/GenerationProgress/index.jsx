@@ -85,9 +85,28 @@ export function GenerationProgress({ generationParams, onReset }) {
       locationImages.slice(0, 5).forEach((img, i) => {
         if (img.file) formData.append(`locationImage_${i}`, img.file);
       });
-      avatarImages.slice(0, 3).forEach((av, i) => {
-        if (av.file) formData.append(`avatarImage_${i}`, av.file);
-      });
+
+      // Avatar images: prebuilt avatars have file=null but a valid URL.
+      // Fetch those URLs and convert to Blob so the backend receives them.
+      const avatarSlice = avatarImages.slice(0, 3);
+      await Promise.all(
+        avatarSlice.map(async (av, i) => {
+          if (av.file) {
+            formData.append(`avatarImage_${i}`, av.file);
+          } else if (av.url) {
+            try {
+              const resp = await fetch(av.url);
+              if (resp.ok) {
+                const blob = await resp.blob();
+                const ext = blob.type.includes("png") ? "png" : "jpg";
+                formData.append(`avatarImage_${i}`, blob, `avatar_${i}.${ext}`);
+              }
+            } catch (_) {
+              console.warn(`[GenerationProgress] Could not fetch avatar ${i} from URL:`, av.url);
+            }
+          }
+        })
+      );
 
       const res = await fetch("/api/veo-long-ad/generate-pipeline", {
         method: "POST",
@@ -109,15 +128,20 @@ export function GenerationProgress({ generationParams, onReset }) {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        // SSE events are delimited by double newline "\n\n"
+        const events = buffer.split("\n\n");
+        // Keep the last incomplete chunk in the buffer
+        buffer = events.pop() ?? "";
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            handleEvent(event);
-          } catch (_) {}
+        for (const eventBlock of events) {
+          // Each block may have multiple lines; find the "data:" line
+          for (const line of eventBlock.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              handleEvent(event);
+            } catch (_) {}
+          }
         }
       }
     } catch (err) {

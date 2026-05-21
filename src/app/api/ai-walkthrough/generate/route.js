@@ -191,7 +191,6 @@ export async function POST(request) {
               aspectRatio: "9:16",
               durationSeconds: 8,
               resolution: "720p",
-              personGeneration: "allow_adult",
               referenceImages,
             },
           });
