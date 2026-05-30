@@ -98,86 +98,170 @@ export async function POST(request) {
 
     const MAX_CHUNKS = 10;
 
-    const chunkingPrompt = `You are a world-class AI video director and scriptwriter specializing in luxury real-estate social media ads.
+    const chunkingPrompt = `You are a world-class AI video director and cinematic real-estate filmmaker specializing in ultra-realistic luxury property social media ads.
 
-Your task:
-1. Split the following property ad script into spoken CHUNKS, each designed to fill ~8 seconds of spoken audio (~20–25 words at 140 wpm speaking pace).
-2. Splits MUST happen at natural sentence breaks or phrase pauses. Never cut mid-sentence.
-3. Maximum ${MAX_CHUNKS} chunks total. If the script would create more than ${MAX_CHUNKS} chunks, combine the shortest adjacent chunks to reduce count.
-4. For EACH chunk, write a full CINEMATIC VEO DIRECTOR PROMPT — a rich, detailed video production brief using the provided property and avatar reference images.
-5. Generate a MASTER VOICE PROMPT for consistent voice characteristics across all chunks.
+Your goal is to generate highly believable human-centered real-estate video prompts that feel naturally filmed rather than AI-generated.
 
-SCRIPT TO SPLIT:
+TASK:
+1. Split the provided script into natural spoken chunks.
+2. Each chunk should feel like a realistic short-form social media clip.
+3. Keep each chunk approximately 5–7 seconds long for maximum realism.
+4. Never split mid-sentence or mid-thought.
+5. Combine smaller lines naturally when needed.
+6. Generate a MASTER VOICE PROMPT for consistent voice realism across all chunks.
+7. For every chunk, generate a cinematic VEO production prompt grounded in:
+   • the provided avatar reference image
+   • the provided property reference images
+
+SCRIPT:
 ---
 ${script}
 ---
 
-LANGUAGE: ${langName}
+LANGUAGE:
+${langName}
 
-VEO PROMPT FORMAT FOR EACH CHUNK (follow this structure exactly):
+MAXIMUM CHUNKS:
+${MAX_CHUNKS}
 
-🎬 VEO 3.1 PROMPT — CHUNK [N] OF [TOTAL] (8 SEC, ${langName.toUpperCase()})
-
-🎭 CHARACTER (from reference image):
-• [Brief character description from avatar image — age, appearance, styling, expression. Describe their hair, clothing, and features matching the reference photo.]
-• Confident real-estate creator energy, speaking directly to camera
-• Extreme photorealistic details: real human skin texture (pores, micro-shadows, natural lines), expressive eyes, no waxy or artificial AI skin look
-• Lip-sync perfectly matched to dialogue
-
-🗣️ DIALOGUE:
-"[EXACT TEXT FROM CHUNK — same words, no changes]"
-
-🎥 CAMERA & SHOT (8 SEC):
-[One specific 8-second shot breakdown with camera movement. Describe:
-  — Shot type (wide, medium, close-up, drone)
-  — Camera movement (push in, pull back, orbit, handheld walk)
-  — Subject position (gate, facade, balcony, exterior)
-  — Mood/lighting beat]
-
-🏠 VISUAL CONTEXT (from property reference images):
-[2–3 sentences describing the high-end contemporary house shown in the location reference images: white stucco exterior walls, warm natural wood siding cladding, dark black/grey gabled metal roof, clean minimalist modern architectural lines, glass balustrades/railings, luxury landscaping, and soft golden hour or natural lighting. Ground all visuals strictly in the provided location photo.]
-
-⚠️ STRICT RULES:
-• ONLY exterior shots (gate, facade, exterior walls, balcony) — NO interior shots at all
-• Match character EXACTLY from reference image. Preserve natural facial depth and avoid any synthetic, waxy, or artificial look.
-• NO text, captions, overlays, or watermarks on screen
-• Ultra-realistic cinematic quality, 4k editorial photorealism, 9:16 portrait
-• Soft golden hour lighting, luxury real-estate aesthetic
-• Perfect lip-sync mandatory
-
-VOICE DIRECTION:
-• Language: ${langName}
-• Style: Confident real-estate creator
-• Tone: Luxury, aspirational, fast-paced urgency
-• Pacing: ~140 wpm, clear delivery
-
----
-
-OUTPUT FORMAT (follow EXACTLY):
+OUTPUT FORMAT:
 
 MASTER_VOICE_PROMPT:
-[One detailed paragraph describing the presenter's voice: gender, age, accent, pitch, tone quality, emotional arc, pacing, recording quality. Used for ALL chunks.]
+[One highly detailed paragraph describing realistic voice behavior, pacing, accent, microphone quality, breathing, pauses, conversational style, and emotional realism.]
 
 CHUNKS:
+
 [CHUNK 1]
-TEXT: [exact spoken text]
-ESTIMATED_SECONDS: [number]
-CAMERA_DIRECTION: [one-line camera note]
+
+TEXT:
+[Exact spoken text]
+
+ESTIMATED_SECONDS:
+[Estimated duration]
+
+CAMERA_DIRECTION:
+[One-line natural camera movement summary]
+
 VEO_PROMPT:
-[full veo prompt using format above]
+
+🎬 VEO 3.1 PROMPT — CHUNK 1 OF X (${langName.toUpperCase()}, 5–7 SEC)
+
+🎭 CHARACTER (from avatar reference image):
+• Preserve the exact identity, hairstyle, facial structure, skin tone, clothing, and overall appearance from the reference image
+• Natural luxury property presenter casually speaking to camera
+• Authentic human appearance with realistic facial depth, natural asymmetry, blinking, breathing, and relaxed body posture
+• Minimal expressions and subtle conversational emotion only
+• Avoid influencer behavior, model posing, exaggerated confidence, or commercial acting
+• Avoid over-smoothed skin, artificial sharpness, CGI textures, or synthetic beauty aesthetics
+• Slight natural imperfections and candid body language encouraged
+• Natural lip-sync aligned to realistic speech pacing
+
+🗣️ DIALOGUE:
+"[Exact dialogue from this chunk]"
+
+🎙️ HUMAN PERFORMANCE STYLE:
+• Delivery should feel naturally spoken in one take
+• Conversational pacing instead of presenter pacing
+• Small pauses and natural breathing allowed
+• Slight vocal variation and realistic rhythm changes
+• Casual authentic delivery, not overly polished
+• Eye contact should feel imperfect and natural
+• Small natural head movement and subtle posture shifts
+• Minimal hand gestures only when realistic
+
+🎥 CAMERA & SHOT:
+[Describe ONE continuous realistic shot]
+
+Include:
+• shot type
+• framing
+• camera distance
+• realistic camera movement
+• environmental movement
+• natural lighting behavior
+
+Camera should behave like:
+• handheld gimbal footage
+• luxury Instagram reel filming
+• human-operated camera
+• subtle movement inertia
+• tiny framing imperfections
+• realistic focus behavior
+• slight handheld micro-jitter
+
+Avoid:
+• robotic tracking
+• impossible camera movement
+• over-stabilized floating shots
+• aggressive cinematic orbit shots
+
+🏠 VISUAL CONTEXT:
+Ground visuals strictly in the provided property reference images.
+
+Describe:
+• modern luxury architecture
+• exterior facade
+• driveway
+• entrance gate
+• balcony
+• landscaping
+• natural outdoor materials
+• realistic reflections and shadows
+• environmental motion like leaves, fabric, or hair movement
+
+Use:
+• realistic golden hour lighting
+• documentary-style realism
+• natural dynamic range
+• believable exterior environment
+
+⚠️ STRICT RULES:
+• ONLY exterior shots
+• NO interiors
+• NO text overlays
+• NO subtitles
+• NO logos
+• NO watermarks
+• 9:16 vertical framing
+• Ultra-realistic cinematic quality
+• Documentary-commercial hybrid realism
+• Maintain believable proportions and realistic human motion
+• Prioritize realism over cinematic perfection
+• Avoid uncanny valley behavior entirely
+
+🎞️ VISUAL REALISM STYLE:
+• Authentic luxury real-estate Instagram reel aesthetic
+• Feels filmed on a high-end cinema camera with handheld stabilization
+• Realistic motion blur and natural exposure adaptation
+• Organic environmental movement
+• Natural lighting falloff
+• Soft realistic shadows
+• Real-world texture response
+• Avoid hyper-detailed CGI look
+• Avoid “AI influencer” aesthetics
+• Preserve believable human movement and timing
+
+🎙️ VOICE DIRECTION:
+• Language: ${langName}
+• Tone: Calm, conversational, aspirational
+• Energy: Controlled and believable
+• Pace: Natural human speaking rhythm
+• Recording Style: Premium wireless mic or smartphone creator setup
+• Avoid announcer voice or commercial narration tone
+
 [END_CHUNK]
 
-[CHUNK 2]
-TEXT: [exact spoken text]
-ESTIMATED_SECONDS: [number]
-CAMERA_DIRECTION: [one-line camera note]
-VEO_PROMPT:
-[full veo prompt using format above]
-[END_CHUNK]
-
-... (continue for all chunks)
-
-IMPORTANT: Return ONLY the structured output above. No extra commentary. Use the property images to make each chunk's visual context location-specific.`;
+IMPORTANT GLOBAL RULES:
+• Prioritize believable realism over cinematic perfection
+• Keep movement subtle and physically believable
+• Human behavior should feel candid, not performed
+• Do not over-direct expressions
+• Avoid AI-perfect facial symmetry
+• Avoid robotic pacing or movement
+• Shots should feel naturally filmed for social media
+• Preserve continuity between chunks
+• Use realistic environmental physics and motion
+• Return ONLY the structured out`;
 
     const parts = [{ text: chunkingPrompt }];
     locationDataArr.forEach((d) => parts.push({ inlineData: d }));
