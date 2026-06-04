@@ -119,37 +119,45 @@ NEGATIVE PROMPT: No robotic motion, no exaggerated gestures, no excessive head m
         - 11-14 words → duration_seconds: 8
         Never assign more than 8 seconds. Never assign less than 6 seconds.
         DIALOGUE MUST BE MAX 14 WORDS PER PART. Count every word. Cut if over.
+        IMPORTANT: The dialogue must end at least 1 second before the clip ends — leave a natural breath/pause at the end so cuts feel clean.
 
         STEP 3 — ONE ACTION PER PART:
-        Each part has ONE physical action only. The avatar is mostly still while speaking.
-        Never stack "exits car AND closes door AND walks AND looks" — pick ONE.
-        Never use "HARD CAMERA CUT" or any cut/transition language in the prompts.
+        - Each part has ONE physical action only. The avatar is mostly still while speaking.
+        - Never stack multiple actions. Never use "HARD CAMERA CUT" or any cut/transition language.
 
         SCENE STRUCTURE:
-        - First part always: Avatar steps out of a parked luxury SUV, pauses, takes in the property.
-        - Middle parts: Avatar standing at different spots (entrance, balcony, key amenity). ONE spot per part.
-        - Last part always: Avatar faces camera directly, delivers the CTA with a warm smile.
+        - First part (SUV arrival): A luxury SUV is already parked, door already open. The avatar is mid-exit — one leg out, stepping onto the ground. She straightens up and pauses, looking at the property. That is the only action. She does NOT close the door, does NOT walk, does NOT gesture. She simply steps out and pauses.
+        - Middle parts: Avatar standing still at different spots (property entrance, balcony, key amenity). ONE still spot per part.
+        - Last part: Avatar faces camera directly, standing still, warm smile, delivers the CTA.
+
+        OUTFIT CONSISTENCY RULE (critical — read carefully):
+        - In part 1's prompt, describe a specific outfit for the avatar: e.g., "She wears a fitted ivory blazer, white top, minimal gold jewellery, hair down."
+        - Choose an outfit that fits luxury real estate UGC — smart casual, elevated, clean.
+        - In EVERY subsequent part, copy that exact outfit description verbatim, prefixed with: "SAME OUTFIT: [description]."
+        - This is mandatory. Every single part after part 1 must include this line.
 
         DIALOGUE RULES:
         - Spoken language: ${language}. For Indian languages, ROMAN TRANSLITERATION only (e.g., "Yeh property sach mein...").
         - Write dialogue the way a real person talks to a friend — not a TV presenter.
-        - Pick the single most memorable line from the script for each part. Short punchy phrases.
+        - Each part's dialogue is a standalone complete sentence. It must NOT continue from the previous clip and must NOT flow into the next.
+        - Pick the single most powerful line from the script for each part. Short, punchy, conversational.
         - MAX 14 words. Count them. If over, trim.
 
         OUTPUT — valid JSON only, no markdown wrappers:
         {
           "voice_profile": "A young woman in her mid-20s speaks directly to camera in fluent ${language}, like sharing an exciting discovery with a close friend. Warm, unhurried, genuinely enthusiastic. Natural breathing between phrases. No performance voice — real conversation energy.",
           "parts": [
-            { "prompt": "full Veo scene prompt", "duration_seconds": 8 },
-            { "prompt": "full Veo scene prompt", "duration_seconds": 6 }
+            { "prompt": "full Veo scene prompt including outfit description", "duration_seconds": 8 },
+            { "prompt": "full Veo scene prompt with SAME OUTFIT line", "duration_seconds": 6 }
           ]
         }
 
         FOR EACH PART'S "prompt":
-        - Describe: the location, the ONE action, the EXACT dialogue in quotes.
-        - For the first part: no prefix needed.
-        - For all other parts: prefix with "MAINTAIN EXACT SAME PRESENTER IDENTITY. New scene: [location]."
-        - Append at the very end of every prompt: "${UGC_AESTHETICS}"
+        - Line 1: scene location and avatar position.
+        - Line 2: outfit — for part 1 describe it fresh; for all other parts use "SAME OUTFIT: [exact description from part 1]."
+        - Line 3: the ONE physical action.
+        - Line 4: EXACT dialogue in quotes.
+        - Final line: append "${UGC_AESTHETICS}"
 
         THE SCRIPT TO ADAPT:
         ---
