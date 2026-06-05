@@ -46,7 +46,7 @@ export default function Hero() {
 
       <h1 className="text-[42px] z-10 w-4xl text-center tracking-wide font-bold">
         Create{" "}
-        <span className="bg-[#c7f038] px-2 py-1 rounded text-black">
+        <span className="bg-[#c7f038] italic px-2 py-1 rounded text-black">
           Winning
         </span>{" "}
         Ads in Minutes.

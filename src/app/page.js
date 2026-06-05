@@ -5,6 +5,7 @@ import { HowItWorks } from "@/components/landing/how-it-works";
 import { Testimonials } from "@/components/landing/testimonials";
 import { Pricing } from "@/components/landing/pricing";
 import Footer from "@/modules/common/layout/footer";
+import Cta from "@/modules/home/layout/cta";
 
 export default function LandingPage() {
   return (
@@ -15,6 +16,9 @@ export default function LandingPage() {
       <HowItWorks />
       <Testimonials />
       <Pricing />
+      <div className="bg-white py-12">
+        <Cta />
+      </div>
       <Footer />
     </main>
   );
