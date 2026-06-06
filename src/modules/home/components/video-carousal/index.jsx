@@ -34,7 +34,7 @@ export default function Video() {
     videos.map((src, index) => (
       <div
         key={`${src}-${index}`}
-        className="flex-shrink-0 w-[220px] h-[360px] rounded-3xl overflow-hidden border border-neutral-800"
+        className="shrink-0 w-55 h-90 rounded-3xl overflow-hidden border border-neutral-800"
       >
         <video
           src={src}

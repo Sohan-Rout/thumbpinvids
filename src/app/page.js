@@ -3,7 +3,7 @@ import Hero from "@/modules/home/layout/hero";
 import { Features } from "@/components/landing/features";
 import { HowItWorks } from "@/components/landing/how-it-works";
 import { Testimonials } from "@/components/landing/testimonials";
-import { Pricing } from "@/components/landing/pricing";
+import About from "@/modules/home/layout/about";
 import Footer from "@/modules/common/layout/footer";
 import Cta from "@/modules/home/layout/cta";
 
@@ -15,8 +15,10 @@ export default function LandingPage() {
       <Features />
       <HowItWorks />
       <Testimonials />
-      <Pricing />
-      <div className="bg-white py-12">
+      <div className="bg-[#f5f6f0] pb-12">
+        <About />
+      </div>
+      <div className="bg-white pb-12">
         <Cta />
       </div>
       <Footer />
