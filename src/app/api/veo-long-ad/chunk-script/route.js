@@ -104,9 +104,7 @@ export async function POST(request) {
 
     const MAX_CHUNKS = 5;
 
-    const UGC_AESTHETICS = `QUALITY REQUIREMENTS: Ultra-realistic luxury real estate UGC. Maximum realism. Prioritize realistic lip synchronization over complex movement. Natural human behavior: natural blinking, natural facial expressions, natural breathing. Soft natural ambient sound of the environment only.
-CAMERA: Single continuous gimbal shot, 35mm lens, slow smooth movement, natural handheld micro-movements.
-NEGATIVE PROMPT: No robotic motion, no exaggerated gestures, no excessive head movement, no identity drift, no AI artifacts.`;
+    const UGC_AESTHETICS = `Vertical 9:16 video shot handheld on a smartphone, natural slight camera sway, authentic creator energy. Real person in a real luxury property, natural ambient daylight, no artificial studio lighting. Relaxed natural posture, realistic blinking and breathing, no stiff posing. Perfect lip sync with the spoken dialogue.`;
 
     const chunkingPrompt = `You are an expert AI video director for ultra-realistic luxury real estate UGC.
         I have provided images of a real estate property and a presenter (avatar), plus a script below.
@@ -137,10 +135,10 @@ NEGATIVE PROMPT: No robotic motion, no exaggerated gestures, no excessive head m
         - Last part: Avatar faces camera directly, standing still, warm smile, delivers the CTA.
 
         OUTFIT CONSISTENCY RULE (critical — read carefully):
-        - In part 1's prompt, describe a specific outfit for the avatar: e.g., "She wears a fitted ivory blazer, white top, minimal gold jewellery, hair down."
-        - Choose an outfit that fits luxury real estate UGC — smart casual, elevated, clean.
-        - In EVERY subsequent part, copy that exact outfit description verbatim, prefixed with: "SAME OUTFIT: [description]."
-        - This is mandatory. Every single part after part 1 must include this line.
+        - Look carefully at the avatar reference image provided. Describe EXACTLY what the avatar is wearing: clothing color, style, any visible accessories, hair style. Be specific and literal — do not invent or change anything.
+        - In part 1's prompt, write this as: "AVATAR OUTFIT: [exact description of what you see in the reference image]."
+        - In EVERY subsequent part, copy that exact same outfit description verbatim, prefixed with: "SAME OUTFIT AS REFERENCE: [same description]."
+        - This is mandatory for every single part after part 1. Do not skip it.
 
         DIALOGUE RULES:
         - Spoken language: ${language}. For Indian languages, ROMAN TRANSLITERATION only (e.g., "Yeh property sach mein...").
@@ -151,19 +149,20 @@ NEGATIVE PROMPT: No robotic motion, no exaggerated gestures, no excessive head m
 
         OUTPUT — valid JSON only, no markdown wrappers:
         {
-          "voice_profile": "A young woman in her mid-20s speaks directly to camera in fluent ${language}, like sharing an exciting discovery with a close friend. Warm, unhurried, genuinely enthusiastic. Natural breathing between phrases. No performance voice — real conversation energy.",
+          "voice_profile": "Speaks naturally in ${language}, warm and conversational, like talking to a friend.",
           "parts": [
-            { "prompt": "full Veo scene prompt including outfit description", "duration_seconds": 8 },
-            { "prompt": "full Veo scene prompt with SAME OUTFIT line", "duration_seconds": 6 }
+            { "prompt": "full Veo scene prompt", "duration_seconds": 8 },
+            { "prompt": "full Veo scene prompt", "duration_seconds": 6 }
           ]
         }
 
-        FOR EACH PART'S "prompt":
-        - Line 1: scene location and avatar position.
-        - Line 2: outfit — for part 1 describe it fresh; for all other parts use "SAME OUTFIT: [exact description from part 1]."
-        - Line 3: the ONE physical action.
-        - Line 4: EXACT dialogue in quotes.
-        - Final line: append "${UGC_AESTHETICS}"
+        FOR EACH PART'S "prompt" — write as ONE natural paragraph in this order:
+        1. Scene: where the avatar is and their position.
+        2. Outfit: for part 1 write "Wearing: [exact outfit described from the avatar reference image]." For all other parts write "Same outfit: [same description]."
+        3. Action: the ONE physical action.
+        4. Dialogue: the exact words in quotes, preceded by "She says:"
+        5. Voice note (always last before aesthetics): "She speaks naturally in ${language}, warm and conversational, like talking to a close friend."
+        6. Append: "${UGC_AESTHETICS}"
 
         THE SCRIPT TO ADAPT:
         ---
