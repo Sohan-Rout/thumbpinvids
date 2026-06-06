@@ -197,10 +197,20 @@ export async function POST(request) {
 
           if (!currentOp) throw new Error("Operation lost during polling");
           if (currentOp.error) {
-            const msg = currentOp.error.message || "";
-            throw new Error(msg.includes("internal server issue")
-              ? "Gemini encountered a transient error. Please retry in 1–2 minutes."
-              : msg || "Operation failed");
+            const rawMsg = currentOp.error.message || "";
+            const lc = rawMsg.toLowerCase();
+            const isVeoTransient =
+              lc.includes("internal server") ||
+              lc.includes("internal_server") ||
+              lc.includes("transient") ||
+              lc.includes("unavailable") ||
+              lc.includes("resource_exhausted") ||
+              lc.includes("resource exhausted") ||
+              lc.includes("503") ||
+              lc.includes("429");
+            throw new Error(isVeoTransient
+              ? `Veo transient error — ${rawMsg}`
+              : rawMsg || "Operation failed");
           }
 
           console.log("[VeoLongAd] Operation done. Top-level keys:", currentOp ? Object.keys(currentOp) : "null");
@@ -312,34 +322,68 @@ export async function POST(request) {
             message: `🎬 Generating base clip (1/${totalChunks}) — this takes 2–3 minutes...`,
           });
 
-          const firstPrompt = buildFirstClipPrompt(chunk0, workVoicePrompt);
+          const firstPrompt = buildFirstClipPrompt(chunk0);
 
-          const genOp = await ai.models.generateVideos({
-            model: "veo-3.1-generate-preview",
-            prompt: firstPrompt,
-            config: {
-              aspectRatio,
-              resolution: "720p",
-              durationSeconds: chunk0.estimatedSeconds || 8,
-              referenceImages,
-            },
-          });
+          let firstGeneratedVideo = null;
+          let rawVideoUri = null;
 
-          if (!genOp) throw new Error("Failed to start base video generation");
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              if (attempt > 0) {
+                const waitSec = 30 * attempt;
+                send({
+                  type: "progress",
+                  chunkIndex: 0,
+                  totalChunks,
+                  status: "generating",
+                  message: `⚠️ Veo transient error — retrying base clip in ${waitSec}s (attempt ${attempt + 1}/3)...`,
+                });
+                await new Promise((r) => setTimeout(r, waitSec * 1000));
+              }
 
-          console.log("[VeoLongAd] genOp keys:", genOp ? Object.keys(genOp) : null);
+              const genOp = await ai.models.generateVideos({
+                model: "veo-3.1-generate-preview",
+                prompt: firstPrompt,
+                config: {
+                  aspectRatio,
+                  resolution: "720p",
+                  durationSeconds: chunk0.estimatedSeconds || 8,
+                  referenceImages,
+                },
+              });
 
-          send({
-            type: "progress",
-            chunkIndex: 0,
-            totalChunks,
-            status: "rendering",
-            message: "⏳ Rendering base clip... usually takes 2–3 minutes.",
-          });
+              if (!genOp) throw new Error("Failed to start base video generation");
 
-          const firstResult = await pollOperation(genOp);
-          const firstGeneratedVideo = extractGeneratedVideo(firstResult);
-          const rawVideoUri = extractVideoUri(firstGeneratedVideo);
+              console.log("[VeoLongAd] genOp keys:", genOp ? Object.keys(genOp) : null);
+
+              send({
+                type: "progress",
+                chunkIndex: 0,
+                totalChunks,
+                status: "rendering",
+                message: attempt > 0
+                  ? `⏳ Rendering base clip (retry ${attempt + 1}/3)...`
+                  : "⏳ Rendering base clip... usually takes 2–3 minutes.",
+              });
+
+              const firstResult = await pollOperation(genOp);
+              firstGeneratedVideo = extractGeneratedVideo(firstResult);
+              rawVideoUri = extractVideoUri(firstGeneratedVideo);
+              break;
+            } catch (err) {
+              const msg = (err.message || "").toLowerCase();
+              const isTransient =
+                msg.includes("internal server") ||
+                msg.includes("internal_server") ||
+                msg.includes("transient") ||
+                msg.includes("unavailable") ||
+                msg.includes("resource_exhausted") ||
+                msg.includes("timeout") ||
+                msg.includes("429") ||
+                msg.includes("503");
+              if (!isTransient || attempt === 2) throw err;
+            }
+          }
 
           if (!rawVideoUri) {
             throw new Error("Base video generation returned no video. The prompt may have been rejected or Veo returned an unexpected response shape.");
@@ -374,6 +418,12 @@ export async function POST(request) {
           for (let i = 1; i < workChunks.length; i++) {
             const chunk = workChunks[i];
 
+            // Give Veo time to fully index the previous clip before extending.
+            // This reduces audio artifacts at join points — 8s between extensions.
+            if (i > 1) {
+              await new Promise((r) => setTimeout(r, 8000));
+            }
+
             send({
               type: "progress",
               chunkIndex: i,
@@ -382,7 +432,7 @@ export async function POST(request) {
               message: `🔄 Extending with chunk ${i + 1}/${totalChunks} (~${cumulativeDuration}s so far)...`,
             });
 
-            const extensionPrompt = buildExtensionPrompt(chunk, workVoicePrompt);
+            const extensionPrompt = buildExtensionPrompt(chunk);
 
             let extVideoUri = null;
             let lastErr;
@@ -396,8 +446,6 @@ export async function POST(request) {
                   config: {
                     aspectRatio,
                     resolution: "720p",
-                    durationSeconds: chunk.estimatedSeconds || 8,
-                    ...(avatarReferenceImages.length > 0 && { referenceImages: avatarReferenceImages }),
                   },
                 });
 
@@ -426,25 +474,27 @@ export async function POST(request) {
                 const msg = (err.message || "").toLowerCase();
                 const isTransient =
                   msg.includes("internal server") ||
+                  msg.includes("internal_server") ||
                   msg.includes("transient") ||
+                  msg.includes("unavailable") ||
+                  msg.includes("resource_exhausted") ||
                   msg.includes("timeout") ||
                   msg.includes("429") ||
                   msg.includes("503") ||
-                  msg.includes("not processed") ||
-                  msg.includes("invalid_argument");
+                  msg.includes("not processed");
 
-                if (!isTransient || attempt === 2) throw err;
+                if (!isTransient) throw err; // hard error (bad params etc) — abort pipeline
 
-                const delay = msg.includes("not processed") || msg.includes("invalid_argument")
-                  ? 30000 * (attempt + 1)
-                  : 8000 * (attempt + 1);
+                if (attempt === 2) break; // exhausted retries — fall through to partial save
+
+                const delay = msg.includes("not processed") ? 30000 * (attempt + 1) : 90000;
 
                 send({
                   type: "progress",
                   chunkIndex: i,
                   totalChunks,
                   status: "extending",
-                  message: `⚠️ Temporary error, retrying chunk ${i + 1} in ${delay / 1000}s...`,
+                  message: `⚠️ Veo transient error — retrying chunk ${i + 1} in ${Math.round(delay / 1000)}s (attempt ${attempt + 1}/3)...`,
                 });
                 await new Promise((r) => setTimeout(r, delay));
               }
@@ -583,12 +633,10 @@ export async function POST(request) {
   }
 }
 
-function buildFirstClipPrompt(chunk, masterVoicePrompt) {
-  const voiceSection = masterVoicePrompt ? `${masterVoicePrompt}\n\n` : "";
-  return `${voiceSection}${chunk.veoPrompt || "Ultra-realistic luxury real estate UGC video. Presenter at property exterior. PRESENTER: Match SUBJECT reference image exactly."}`;
+function buildFirstClipPrompt(chunk) {
+  return chunk.veoPrompt || "Luxury real estate creator video. Presenter at property exterior. Match SUBJECT reference image exactly.";
 }
 
-function buildExtensionPrompt(chunk, masterVoicePrompt) {
-  const voiceSection = masterVoicePrompt ? `VOICE: ${masterVoicePrompt}\n\n` : "";
-  return `${voiceSection}${chunk.veoPrompt || "Continue the real estate video. MAINTAIN EXACT SAME PRESENTER IDENTITY. Seamless continuation from the last frame."}`;
+function buildExtensionPrompt(chunk) {
+  return chunk.veoPrompt || "Continue the real estate video. MAINTAIN EXACT SAME PRESENTER IDENTITY. Seamless continuation from the last frame.";
 }
