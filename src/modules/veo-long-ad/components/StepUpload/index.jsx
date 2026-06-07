@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Upload,
   X,
@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { useAvatars } from "@/modules/ai-walkthrough/hooks/useAvatars";
 
 /**
  * StepUpload — Step 1 for the Long-Form Veo Ad pipeline.
@@ -25,6 +24,36 @@ import { useAvatars } from "@/modules/ai-walkthrough/hooks/useAvatars";
  */
 export function StepUpload({ locationImages, setLocationImages, avatarHook, onNext, isValid }) {
   const [draggingLocation, setDraggingLocation] = useState(false);
+
+  // ── My Assets (user uploaded avatars + presenter collections) ─────────────
+  const [myAssets, setMyAssets] = useState([]);
+  const [myAssetsLoading, setMyAssetsLoading] = useState(false);
+
+  useEffect(() => {
+    if (avatarHook.avatarMode !== "my-assets") return;
+    if (myAssets.length > 0) return; // already loaded
+    setMyAssetsLoading(true);
+    fetch("/api/assets")
+      .then((r) => r.json())
+      .then((data) => {
+        const all = (data.assets || []).filter(
+          (a) => a.type === "avatar" || a.type === "presenter"
+        );
+        // normalise to the same shape selectCollection expects
+        const normalised = all.map((a) => {
+          const urls = a.metadata?.urls || [a.url];
+          return {
+            id: a._id,
+            name: a.name,
+            coverImage: urls[0],
+            images: urls.map((url) => ({ url, key: url })),
+          };
+        });
+        setMyAssets(normalised);
+      })
+      .catch(() => {})
+      .finally(() => setMyAssetsLoading(false));
+  }, [avatarHook.avatarMode]);
 
   // ── Location images ────────────────────────────────────────────────────────
   const handleLocationFiles = useCallback(
@@ -61,7 +90,7 @@ export function StepUpload({ locationImages, setLocationImages, avatarHook, onNe
 
   // ── Avatar section ────────────────────────────────────────────────────────
   const { reAvatars, reAvatarsLoading, selectedAvatars, selectCollection, isCollectionSelected,
-    uploadedAvatarFiles, handleUploadFile, toggleUploadedAvatar, removeUploadedAvatar } = avatarHook;
+    uploadedAvatarFiles, removeUploadedAvatar } = avatarHook;
 
   const selectedCollectionAvatarData = reAvatars.find((col) =>
     isCollectionSelected(col.id)
@@ -183,18 +212,22 @@ export function StepUpload({ locationImages, setLocationImages, avatarHook, onNe
           </div>
 
           {/* Mode tabs */}
-          <div className="flex gap-2">
-            {["prebuilt", "upload"].map((mode) => (
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { id: "prebuilt", label: "RE Agents" },
+              { id: "upload", label: "Upload Presenter" },
+              { id: "my-assets", label: "My Assets" },
+            ].map(({ id, label }) => (
               <button
-                key={mode}
-                onClick={() => avatarHook.setAvatarMode(mode)}
+                key={id}
+                onClick={() => avatarHook.setAvatarMode(id)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  avatarHook.avatarMode === mode
+                  avatarHook.avatarMode === id
                     ? "bg-primary text-white shadow"
                     : "border border-border/50 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {mode === "prebuilt" ? "RE Agents" : "Upload Presenter"}
+                {label}
               </button>
             ))}
           </div>
@@ -306,6 +339,61 @@ export function StepUpload({ locationImages, setLocationImages, avatarHook, onNe
                           <X className="w-2.5 h-2.5" />
                         </button>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* My Assets (user uploaded avatars + presenter collections) */}
+          {avatarHook.avatarMode === "my-assets" && (
+            <div className="space-y-2">
+              {myAssetsLoading ? (
+                <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading your assets...
+                </div>
+              ) : myAssets.length === 0 ? (
+                <div className="text-center py-6 space-y-1">
+                  <p className="text-sm text-muted-foreground">No avatars uploaded yet.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Upload avatar photos in your Asset Library first.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+                  {myAssets.map((col) => {
+                    const selected = avatarHook.isCollectionSelected(col.id);
+                    return (
+                      <button
+                        key={col.id}
+                        onClick={() => avatarHook.selectCollection(col)}
+                        className={`relative rounded-2xl overflow-hidden border-2 transition-all text-left ${
+                          selected
+                            ? "border-primary ring-2 ring-primary/30 scale-[1.02]"
+                            : "border-border/40 hover:border-primary/40"
+                        }`}
+                      >
+                        {col.images.length > 1 ? (
+                          <div className="grid grid-cols-2 w-full h-28">
+                            {col.images.slice(0, 4).map((img, i) => (
+                              <img key={i} src={img.url} alt="" className="w-full h-full object-cover" />
+                            ))}
+                          </div>
+                        ) : (
+                          <img src={col.coverImage} alt={col.name} className="w-full h-28 object-cover" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                        {selected && (
+                          <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                          </div>
+                        )}
+                        <p className="absolute bottom-2 left-2 right-2 text-[11px] text-white font-medium truncate">
+                          {col.name}
+                        </p>
+                      </button>
                     );
                   })}
                 </div>
