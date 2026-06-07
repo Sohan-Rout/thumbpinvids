@@ -3,6 +3,7 @@ import Hero from "@/modules/home/layout/hero";
 import About from "@/modules/home/layout/about";
 import Footer from "@/modules/common/layout/footer";
 import Cta from "@/modules/home/layout/cta";
+import Review from "@/modules/home/layout/reviews";
 
 export default function LandingPage() {
   return (
@@ -11,6 +12,9 @@ export default function LandingPage() {
       <Hero />
       <div className="bg-[#f5f6f0] py-12">
         <About />
+      </div>
+      <div className="bg-white py-12">
+        <Review />
       </div>
       <div className="bg-white pb-12">
         <Cta />
