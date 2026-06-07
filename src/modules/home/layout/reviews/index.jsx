@@ -82,11 +82,15 @@ export default function Review() {
       <div className="flex pt-12 gap-4">
         <div className="w-xl flex flex-col gap-8 p-6 bg-[#f5f6f0] border border-neutral-300 rounded-3xl">
           <div className="flex items-center justify-between">
-            <span className="bg-white px-4 py-1 rounded-full border uppercase font-bold border-neutral-300 text-xs">Featured Story</span>
+            <span className="bg-white px-4 py-1 rounded-full border uppercase font-bold border-neutral-300 text-xs">
+              Featured Story
+            </span>
             <Stars fill="black" stroke="black" />
           </div>
           <p className="text-2xl">
-            “ThumbGram cut our creative turnaround from days to minutes. We can launch more angles, react faster to what is working, and scale performance without growing the team behind the ads.”
+            “ThumbGram cut our creative turnaround from days to minutes. We can
+            launch more angles, react faster to what is working, and scale
+            performance without growing the team behind the ads.”
           </p>
           <div className="flex justify-between items-center gap-2">
             <div className="border border-neutral-300 rounded-3xl w-42 p-4">
@@ -95,7 +99,9 @@ export default function Review() {
             </div>
             <div className="border border-neutral-300 rounded-3xl w-42 p-4">
               <h1 className="font-black text-xl">160%</h1>
-              <span className="text-xs text-neutral-500">increase in sales</span>
+              <span className="text-xs text-neutral-500">
+                increase in sales
+              </span>
             </div>
             <div className="border border-neutral-300 rounded-3xl w-42 p-4">
               <h1 className="font-black text-xl">3x</h1>
@@ -104,15 +110,57 @@ export default function Review() {
           </div>
         </div>
         <div className="flex flex-col gap-4">
-            <div className="bg-white border border-neutral-300 w-lg p-6 rounded-3xl">
-                <div className="flex items-center justify-between">
-                    <span className="bg-[#c9f036] px-4 py-1 rounded-full uppercase font-bold text-xs">Brandboost</span>
-                    <Stars fill="black" stroke="black" />
-                </div>
+          <div className="bg-white flex flex-col gap-4 border border-neutral-300 w-lg p-6 rounded-3xl">
+            <div className="flex items-center justify-between">
+              <span className="bg-[#c9f036] px-4 py-1 rounded-full uppercase font-bold text-xs">
+                Brandboost
+              </span>
+              <Stars fill="black" stroke="black" />
             </div>
-            <div>
+            <p className="text-xl">
+              “We scaled creative output without adding headcount. ThumbGram
+              gives us launch-ready ads that stay on-brand and ready for
+              testing.”
+            </p>
+            <div className="flex justify-between items-center gap-2">
+              <div className="border border-neutral-300 rounded-3xl w-full bg-[#f5f6f0] p-4">
+                <h1 className="font-black text-xl">$2.4M</h1>
+                <span className="text-xs text-neutral-500">
+                  revenue generated
+                </span>
+              </div>
+              <div className="border border-neutral-300 rounded-3xl bg-[#f5f6f0] w-full p-4">
+                <h1 className="font-black text-xl">240%</h1>
+                <span className="text-xs text-neutral-500">lift in ROAS</span>
+              </div>
+            </div>
+          </div>
 
+          <div className="bg-white flex flex-col gap-4 border border-neutral-300 w-lg p-6 rounded-3xl">
+            <div className="flex items-center justify-between">
+              <span className="bg-[#c9f036] px-4 py-1 rounded-full uppercase font-bold text-xs">
+                ScalerX
+              </span>
+              <Stars fill="black" stroke="black" />
             </div>
+            <p className="text-xl">
+              “The platform paid for itself fast. We replaced slow agency cycles
+              with a workflow that helps us test more creative and move on
+              winners earlier.”
+            </p>
+            <div className="flex justify-between items-center gap-2">
+              <div className="border border-neutral-300 rounded-3xl w-full bg-[#f5f6f0] p-4">
+                <h1 className="font-black text-xl">$500K</h1>
+                <span className="text-xs text-neutral-500">
+                  saved in agency fees
+                </span>
+              </div>
+              <div className="border border-neutral-300 rounded-3xl bg-[#f5f6f0] w-full p-4">
+                <h1 className="font-black text-xl">4x</h1>
+                <span className="text-xs text-neutral-500">campaign velocity</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
