@@ -18,7 +18,7 @@ const AssetSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["avatar", "product", "background", "video", "clip", "composite"],
+      enum: ["avatar", "product", "background", "video", "clip", "composite", "presenter"],
       required: true,
     },
     metadata: {
@@ -30,5 +30,7 @@ const AssetSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+AssetSchema.index({ userId: 1, createdAt: -1 });
 
 export default mongoose.models.Asset || mongoose.model("Asset", AssetSchema);

@@ -10,17 +10,24 @@ export function useAssets(typeFilter = null) {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
       let url = "/api/assets";
       if (typeFilter) url += `?type=${typeFilter}`;
-      
+
       const res = await fetch(url);
       const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error || "Failed to fetch assets");
 
+      console.log("[useAssets] GET /api/assets →", res.status, data);
+
+      if (!res.ok) {
+        setFetchError(`${res.status}: ${data.error || "Failed to fetch assets"}`);
+        return;
+      }
+
+      setFetchError(null);
       const fetchedAssets = (data.assets || []).map(a => ({
         id: a._id,
         name: a.name,
@@ -28,7 +35,6 @@ export function useAssets(typeFilter = null) {
         type: a.type,
         is_custom: true,
         metadata: a.metadata || {},
-        // Compatibility mapper for older avatar code
         image_url: a.url,
         ethnicity: a.metadata?.ethnicity || "Custom",
       }));
@@ -36,6 +42,7 @@ export function useAssets(typeFilter = null) {
       setAssets(fetchedAssets);
     } catch (error) {
       console.warn("[useAssets] Fetch failed:", error.message);
+      setFetchError(error.message);
     } finally {
       setLoading(false);
     }
@@ -91,8 +98,8 @@ export function useAssets(typeFilter = null) {
 
   return {
     assets,
-    avatars: assets.filter(a => a.type === "avatar"),
-    customAvatars: assets.filter(a => a.type === "avatar"),
+    avatars: assets.filter(a => a.type === "avatar" || a.type === "presenter"),
+    customAvatars: assets.filter(a => a.type === "avatar" || a.type === "presenter"),
     libraryAvatars: [],
     productImages: assets.filter(a => a.type === "product" || a.type === "image"),
     backgrounds: assets.filter(a => a.type === "background"),
@@ -101,6 +108,7 @@ export function useAssets(typeFilter = null) {
     voices: [],
     loading,
     uploading,
+    fetchError,
     uploadAsset,
     deleteAsset,
     refetch: fetchData,

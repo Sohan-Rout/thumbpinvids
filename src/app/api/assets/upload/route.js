@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Asset from "@/models/Asset";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth-config";
+import { getResolvedUserId } from "@/lib/user-resolver";
 import { uploadToR2, buildUserKey, extFromMime } from "@/lib/r2-upload";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -10,8 +9,8 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 export async function POST(request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    const userId = await getResolvedUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -39,13 +38,13 @@ export async function POST(request) {
     // ── Upload to R2 ──────────────────────────────────────────────────────────
     const buffer = Buffer.from(await file.arrayBuffer());
     const ext = extFromMime(file.type) || "bin";
-    const key = buildUserKey(session.user.id, category, ext, category);
+    const key = buildUserKey(userId, category, ext, category);
     const url = await uploadToR2(buffer, key, file.type);
 
     // ── Save metadata to MongoDB ──────────────────────────────────────────────
     await dbConnect();
     const asset = await Asset.create({
-      userId: session.user.id,
+      userId,
       name: name.trim().substring(0, 100),
       url,
       type,
