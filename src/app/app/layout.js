@@ -1,5 +1,6 @@
 import UserNav from "@/modules/common/layout/navbar";
 import { AdminModal } from "@/components/dashboard/admin-modal";
+import Footer from "@/modules/common/layout/footer";
 
 export default function DashboardLayout({ children }) {
   return (
@@ -16,6 +17,8 @@ export default function DashboardLayout({ children }) {
       <div className="fixed bottom-6 right-6">
         <AdminModal />
       </div>
+
+      <Footer />
     </div>
   );
 }
