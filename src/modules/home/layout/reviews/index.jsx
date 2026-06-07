@@ -79,17 +79,34 @@ export default function Review() {
         </div>
       </div>
 
-      <div className="grid-cols-5">
-        <div className="col-span-3">
+      <div className="flex pt-12 gap-4">
+        <div className="w-xl flex flex-col gap-8 p-6 bg-[#f5f6f0] border border-neutral-300 rounded-3xl">
           <div className="flex items-center justify-between">
-            <span>Featured Story</span>
+            <span className="bg-white px-4 py-1 rounded-full border uppercase font-bold border-neutral-300 text-xs">Featured Story</span>
             <Stars fill="black" stroke="black" />
           </div>
+          <p className="text-2xl">
+            “ThumbGram cut our creative turnaround from days to minutes. We can launch more angles, react faster to what is working, and scale performance without growing the team behind the ads.”
+          </p>
+          <div className="flex justify-between items-center gap-2">
+            <div className="border border-neutral-300 rounded-3xl w-42 p-4">
+              <h1 className="font-black text-xl">$1M</h1>
+              <span className="text-xs text-neutral-500">ARR in 4 months</span>
+            </div>
+            <div className="border border-neutral-300 rounded-3xl w-42 p-4">
+              <h1 className="font-black text-xl">160%</h1>
+              <span className="text-xs text-neutral-500">increase in sales</span>
+            </div>
+            <div className="border border-neutral-300 rounded-3xl w-42 p-4">
+              <h1 className="font-black text-xl">3x</h1>
+              <span className="text-xs text-neutral-500">higher ROI</span>
+            </div>
+          </div>
         </div>
-        <div className="col-span-2">
-            <div>
+        <div className="flex flex-col gap-4">
+            <div className="bg-white border border-neutral-300 w-lg p-6 rounded-3xl">
                 <div className="flex items-center justify-between">
-                    <span>Brandboost</span>
+                    <span className="bg-[#c9f036] px-4 py-1 rounded-full uppercase font-bold text-xs">Brandboost</span>
                     <Stars fill="black" stroke="black" />
                 </div>
             </div>
