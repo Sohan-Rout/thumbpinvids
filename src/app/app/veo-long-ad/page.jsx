@@ -77,7 +77,7 @@ function VeoLongAdContent() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4 space-y-6 animate-fade-in">
+    <div className="max-w-6xl mx-auto py-8 px-4 space-y-2 animate-fade-in">
       {/* Header card */}
       <div className="rounded-3xl p-5 sm:p-6">
         {step < 2 && (
