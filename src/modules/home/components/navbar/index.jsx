@@ -46,22 +46,8 @@ export function Navbar() {
             </span>
           </Link>
 
-          {/* Desktop Nav 
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              Features
-            </a>
-            <a href="#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              How it Works
-            </a>
-            <a href="#pricing" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              Pricing
-            </a>
-          </div>
-          */}
-
           {/* Desktop Nav */}
-          <ul className="hidden md:flex items-center text-md text-black gap-8">
+          <ul className="hidden md:flex items-center text-sm text-black gap-8">
             {navItems.map((item, index) => (
                 <li key={index}>
                     <Link href={item.link}>{item.title}</Link>
