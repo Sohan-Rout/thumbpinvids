@@ -4,7 +4,6 @@ import { useState, useRef } from "react";
 import {
   Wand2,
   FileText,
-  ChevronRight,
   ChevronLeft,
   ChevronDown,
   ChevronUp,
@@ -15,13 +14,14 @@ import {
   Info,
   Sparkles,
   Globe2,
+  Video,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { LANGUAGES, TONES } from "@/utils/constants";
 import { compressImage } from "@/utils/compress-image";
 
-const MAX_CHUNKS = 10;
 const MIN_SCRIPT_WORDS = 20;
 const MAX_SCRIPT_WORDS = 500;
 
@@ -62,8 +62,9 @@ export function StepScript({
   const [scriptWordCount, setScriptWordCount] = useState(0);
   const [scriptEstDuration, setScriptEstDuration] = useState(0);
 
-  // ── Chunking state ───────────────────────────────────────────────────────
-  const [chunks, setChunks] = useState([]);
+  // ── Beat plan state ──────────────────────────────────────────────────────
+  const [beats, setBeats] = useState([]);
+  const [chunks, setChunks] = useState([]); // legacy compat
   const [masterVoicePrompt, setMasterVoicePrompt] = useState("");
   const [presenterDescription, setPresenterDescription] = useState("");
   const [chunking, setChunking] = useState(false);
@@ -153,11 +154,15 @@ export function StepScript({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chunking failed");
 
+      setBeats(data.beats || []);
       setChunks(data.chunks || []);
-      setMasterVoicePrompt(data.masterVoicePrompt || "");
+      setMasterVoicePrompt(data.masterVoicePrompt || data.voiceProfile || "");
       setPresenterDescription(data.presenterDescription || "");
+
+      const avatarCount = (data.beats || []).filter((b) => b.visual_type === "avatar").length;
+      const propCount = (data.beats || []).filter((b) => b.visual_type === "property").length;
       toast.success(
-        `Split into ${data.totalChunks} chunk${data.totalChunks !== 1 ? "s" : ""} — ~${data.totalEstimatedDuration}s video`,
+        `Beat plan ready — ${data.totalChunks} beats (~${data.totalEstimatedDuration}s) · ${propCount} property · ${avatarCount} avatar`,
       );
 
       // Scroll to chunks
@@ -175,9 +180,9 @@ export function StepScript({
   // ── Generate video ────────────────────────────────────────────────────────
   const handleGenerate = () => {
     if (chunks.length === 0) {
-      return toast.error("Please chunk the script first.");
+      return toast.error("Please plan the beats first.");
     }
-    onGenerate({ chunks, masterVoicePrompt, presenterDescription, language });
+    onGenerate({ beats, chunks, masterVoicePrompt, voiceProfile: masterVoicePrompt, presenterDescription, language });
   };
 
   return (
@@ -512,82 +517,99 @@ export function StepScript({
           </div>
 
           <div className="rounded-2xl border border-border/50 bg-muted/10 p-1 space-y-1">
-            {chunks.map((chunk, idx) => (
-              <div key={idx} className="rounded-xl overflow-hidden">
-                <button
-                  onClick={() =>
-                    setExpandedChunk(expandedChunk === idx ? null : idx)
-                  }
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/30 transition-colors"
-                >
-                  {/* Progress circle */}
-                  <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center shrink-0">
-                    <span className="text-[10px] font-bold text-primary">
-                      {idx + 1}
-                    </span>
-                  </div>
+            {chunks.map((chunk, idx) => {
+              const isAvatar = chunk.visualType === "avatar";
+              const beatType = chunk.beatType || "PROPERTY_VISUAL";
+              const beatColors = {
+                HOOK: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+                AVATAR_SEGMENT: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                PROPERTY_VISUAL: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+                FEATURE_BURST: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+                CTA: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400",
+              };
+              const colorClass = beatColors[beatType] || beatColors.PROPERTY_VISUAL;
 
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate text-foreground">
-                      {chunk.text.slice(0, 70)}
-                      {chunk.text.length > 70 ? "…" : ""}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      ~{chunk.estimatedSeconds}s ·{" "}
-                      {chunk.cameraDirection?.slice(0, 50) ||
-                        "Cinematic exterior"}
-                    </p>
-                  </div>
+              return (
+                <div key={idx} className="rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setExpandedChunk(expandedChunk === idx ? null : idx)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/30 transition-colors"
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${colorClass}`}>
+                      {isAvatar
+                        ? <User className="w-3 h-3" />
+                        : <Video className="w-3 h-3" />
+                      }
+                    </div>
 
-                  {expandedChunk === idx ? (
-                    <ChevronUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  )}
-                </button>
-
-                {expandedChunk === idx && (
-                  <div className="px-3 pb-3 space-y-2">
-                    <div className="rounded-lg bg-muted/30 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-1">
-                        Spoken Text
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${colorClass}`}>
+                          {beatType.replace("_", " ")}
+                        </span>
+                        {chunk.overlayText && (
+                          <span className="text-[9px] text-muted-foreground truncate max-w-30">
+                            "{chunk.overlayText}"
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-medium truncate text-foreground">
+                        {chunk.text.slice(0, 65)}{chunk.text.length > 65 ? "…" : ""}
                       </p>
-                      <p className="text-xs text-foreground leading-relaxed">
-                        "{chunk.text}"
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        ~{chunk.estimatedSeconds}s · {isAvatar ? "Veo presenter" : "Veo property clip"}
                       </p>
                     </div>
-                    {chunk.veoPrompt && (
-                      <div className="rounded-lg bg-violet-50/50 dark:bg-violet-900/10 border border-violet-200/40 dark:border-violet-700/20 p-2.5">
-                        <p className="text-[10px] text-violet-600 dark:text-violet-400 font-medium uppercase tracking-wide mb-1">
-                          Veo Director Prompt
-                        </p>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-line">
-                          {chunk.veoPrompt.slice(0, 400)}
-                          {chunk.veoPrompt.length > 400 ? "…" : ""}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                    {expandedChunk === idx
+                      ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    }
+                  </button>
+
+                  {expandedChunk === idx && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {chunk.narration && (
+                        <div className="rounded-lg bg-blue-50/50 dark:bg-blue-900/10 border border-blue-200/40 p-2.5">
+                          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wide mb-1">
+                            Voiceover (Sarvam TTS)
+                          </p>
+                          <p className="text-xs text-foreground leading-relaxed">"{chunk.narration}"</p>
+                        </div>
+                      )}
+                      {chunk.veoPrompt && (
+                        <div className="rounded-lg bg-violet-50/50 dark:bg-violet-900/10 border border-violet-200/40 p-2.5">
+                          <p className="text-[10px] text-violet-600 dark:text-violet-400 font-medium uppercase tracking-wide mb-1">
+                            Veo Shot Prompt
+                          </p>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            {chunk.veoPrompt.slice(0, 300)}{chunk.veoPrompt.length > 300 ? "…" : ""}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-700/20 dark:bg-emerald-900/10 p-3 flex gap-2">
-            <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
-              Veo will generate a{" "}
-              <strong>{chunks[0]?.estimatedSeconds || 8}s base clip</strong>{" "}
-              then extend it {chunks.length - 1} time
-              {chunks.length - 1 !== 1 ? "s" : ""}, producing a final{" "}
-              <strong>
-                ~{chunks.reduce((s, c) => s + (c.estimatedSeconds || 8), 0)}
-                -second long-form ad
-              </strong>
-              . Each extension takes 2–3 minutes. Total estimated time: ~
-              {Math.round(chunks.length * 2.5)} minutes.
-            </p>
-          </div>
+          {/* Pipeline info */}
+          {(() => {
+            const avatarBeats = chunks.filter((c) => c.visualType === "avatar");
+            const propBeats = chunks.filter((c) => c.visualType !== "avatar");
+            const totalSecs = chunks.reduce((s, c) => s + (c.estimatedSeconds || 4), 0);
+            return (
+              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-700/20 dark:bg-emerald-900/10 p-3 flex gap-2">
+                <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
+                  Hybrid pipeline: <strong>{propBeats.length} property clip{propBeats.length !== 1 ? "s" : ""}</strong> + <strong>{avatarBeats.length} presenter clip{avatarBeats.length !== 1 ? "s" : ""}</strong> via Veo 3.1.
+                  {" "}Sarvam TTS voiceover mixed in. All beats generate <strong>in parallel</strong>. Final reel ~<strong>{totalSecs}s</strong>.
+                  Estimated time: ~{Math.max(3, chunks.length * 2.5)} minutes.
+                </p>
+              </div>
+            );
+          })()}
         </div>
       )}
 

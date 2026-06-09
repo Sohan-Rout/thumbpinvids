@@ -647,6 +647,9 @@ export default function AssetLibraryPage() {
       {/* Preview Modal */}
       <Dialog open={!!previewAsset} onOpenChange={(open) => !open && setPreviewAsset(null)}>
         <DialogContent className="max-w-4xl p-0 overflow-hidden bg-black/95 border-border/50">
+          <DialogTitle className="sr-only">
+            {previewAsset?.name || "Asset preview"}
+          </DialogTitle>
           <div className="relative w-full h-[80vh] flex items-center justify-center">
             {previewAsset && (
               previewAsset.type === "video" || previewAsset.type === "clip" ? (

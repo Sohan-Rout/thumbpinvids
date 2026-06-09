@@ -59,13 +59,13 @@ function VeoLongAdContent() {
   // Derived: step 0 is valid when we have images + an avatar
   const step0Valid = locationImages.length >= 1 && avatarHook.selectedAvatars.length >= 1;
 
-  const handleGenerate = ({ chunks, masterVoicePrompt, presenterDescription, language, videoModel }) => {
+  const handleGenerate = ({ beats, chunks, masterVoicePrompt, voiceProfile, presenterDescription, language, videoModel }) => {
     const avatarImagesForGen = avatarHook.selectedAvatars.map((av) => ({
       file: av.file || null,
       url: av.url,
       name: av.name,
     }));
-    setGenerationParams({ chunks, masterVoicePrompt, presenterDescription, language, videoModel, locationImages, avatarImages: avatarImagesForGen });
+    setGenerationParams({ beats: beats || [], chunks, masterVoicePrompt, voiceProfile: voiceProfile || masterVoicePrompt, presenterDescription, language, videoModel, locationImages, avatarImages: avatarImagesForGen });
     setStep(2);
   };
 
