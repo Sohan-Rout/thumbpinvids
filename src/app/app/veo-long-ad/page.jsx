@@ -52,6 +52,7 @@ function StepIndicator({ currentStep = 1 }) {
 function VeoLongAdContent() {
   const [step, setStep] = useState(0);
   const [locationImages, setLocationImages] = useState([]);
+  const [backgroundImage, setBackgroundImage] = useState(null);
   const [generationParams, setGenerationParams] = useState(null);
 
   const avatarHook = useAvatars();
@@ -59,13 +60,13 @@ function VeoLongAdContent() {
   // Derived: step 0 is valid when we have images + an avatar
   const step0Valid = locationImages.length >= 1 && avatarHook.selectedAvatars.length >= 1;
 
-  const handleGenerate = ({ beats, chunks, masterVoicePrompt, voiceProfile, presenterDescription, language, videoModel }) => {
+  const handleGenerate = ({ beats, chunks, masterVoicePrompt, voiceProfile, presenterDescription, language, videoModel, elevenLabsVoice }) => {
     const avatarImagesForGen = avatarHook.selectedAvatars.map((av) => ({
       file: av.file || null,
       url: av.url,
       name: av.name,
     }));
-    setGenerationParams({ beats: beats || [], chunks, masterVoicePrompt, voiceProfile: voiceProfile || masterVoicePrompt, presenterDescription, language, videoModel, locationImages, avatarImages: avatarImagesForGen });
+    setGenerationParams({ beats: beats || [], chunks, masterVoicePrompt, voiceProfile: voiceProfile || masterVoicePrompt, presenterDescription, language, videoModel, elevenLabsVoice, backgroundImage, locationImages, avatarImages: avatarImagesForGen });
     setStep(2);
   };
 
@@ -93,6 +94,8 @@ function VeoLongAdContent() {
           <StepUpload
             locationImages={locationImages}
             setLocationImages={setLocationImages}
+            backgroundImage={backgroundImage}
+            setBackgroundImage={setBackgroundImage}
             avatarHook={avatarHook}
             onNext={() => setStep(1)}
             isValid={step0Valid}

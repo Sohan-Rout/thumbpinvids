@@ -62,6 +62,7 @@ export function GenerationProgress({ generationParams, onReset }) {
     presenterDescription = "",
     language = "english",
     elevenLabsVoice = "21m00Tcm4TlvDq8ikWAM",
+    backgroundImage = null,
     locationImages = [],
     avatarImages = [],
   } = generationParams || {};
@@ -108,7 +109,7 @@ export function GenerationProgress({ generationParams, onReset }) {
     };
   }, []);
 
-  const triggerCombine = async (clipUrls, audioUrls, fullAudioUrl) => {
+  const triggerCombine = async (clipUrls, audioUrls, fullAudioUrl, serverDurations) => {
     if (!clipUrls || clipUrls.length === 0) return;
     setStatus(STATUS.COMBINING);
     setCombineProgress("Loading FFmpeg…");
@@ -122,7 +123,7 @@ export function GenerationProgress({ generationParams, onReset }) {
     }
 
     try {
-      const durations = beatPlan.map((b) => b.duration_seconds || b.estimatedSeconds || null);
+      const durations = serverDurations || beatPlan.map((b) => b.duration_seconds || b.estimatedSeconds || null);
       const { blobUrl, blob } = await combineVideos(clipUrls, {
         onProgress: (msg) => setCombineProgress(msg),
         durations,
@@ -199,6 +200,11 @@ export function GenerationProgress({ generationParams, onReset }) {
           }
         })
       );
+
+      if (backgroundImage?.file) {
+        const compressed = await compressImage(backgroundImage.file);
+        formData.append("backgroundImage", compressed);
+      }
 
       const res = await fetch("/api/veo-long-ad/generate-pipeline", {
         method: "POST",
@@ -338,7 +344,7 @@ export function GenerationProgress({ generationParams, onReset }) {
           toast.error("Generation failed — no clips produced. Check the server console.");
         } else {
           toast.success(`${event.clipUrls.length} clips ready — combining with voiceover…`);
-          triggerCombine(event.clipUrls, event.audioUrls || null, event.fullAudioUrl || null);
+          triggerCombine(event.clipUrls, event.audioUrls || null, event.fullAudioUrl || null, event.durations || null);
         }
         break;
 
@@ -418,7 +424,7 @@ export function GenerationProgress({ generationParams, onReset }) {
   // ── Status label ─────────────────────────────────────────────────────────
   const statusLabel = () => {
     if (status === STATUS.AWAITING_APPROVAL) return `Review beat plan — auto-approving in ${approvalCountdown}s`;
-    if (status === STATUS.VOICE_GENERATING) return "Generating Sarvam voice…";
+    if (status === STATUS.VOICE_GENERATING) return "Generating ElevenLabs voice…";
     if (status === STATUS.GENERATING_BASE) return `Generating beat ${currentChunkIdx + 1}/${totalChunks}…`;
     if (status === STATUS.EXTENDING) return `Generating beat ${currentChunkIdx + 1}/${totalChunks}…`;
     if (status === STATUS.COMBINING) return "Assembling clips…";
@@ -450,7 +456,7 @@ export function GenerationProgress({ generationParams, onReset }) {
             ? "Edit narration or Veo prompts below. Auto-approves in a few seconds."
             : status === STATUS.COMBINING
             ? combineProgress || "Combining clips with FFmpeg…"
-            : `${totalChunks} beats · Ken Burns + Sarvam TTS · avatar acts = black screen`}
+            : `${totalChunks} beats · Ken Burns + ElevenLabs TTS · avatar acts = black screen`}
         </p>
       </div>
 
@@ -611,7 +617,7 @@ export function GenerationProgress({ generationParams, onReset }) {
           </div>
           <div>
             <p className="text-sm font-medium">
-              {status === STATUS.VOICE_GENERATING && "Generating Sarvam TTS voiceover for all narration beats…"}
+              {status === STATUS.VOICE_GENERATING && "Generating ElevenLabs voiceover for all narration beats…"}
               {status === STATUS.GENERATING_BASE && `Beat ${currentChunkIdx + 1}/${totalChunks} generating in parallel…`}
               {status === STATUS.EXTENDING && `Beat ${currentChunkIdx + 1}/${totalChunks} generating…`}
               {status === STATUS.COMBINING && (combineProgress || "Combining all clips via FFmpeg…")}

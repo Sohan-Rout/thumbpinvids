@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import { fal } from "@fal-ai/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 
@@ -15,10 +15,18 @@ import { authOptions } from "@/lib/auth-config";
  * Output (JSON):
  *   { success: true, script: string, wordCount: number }
  */
+
+async function callFal(prompt) {
+  fal.config({ credentials: process.env.FAL_KEY });
+  const result = await fal.subscribe("fal-ai/any-llm", {
+    input: { model: "anthropic/claude-3-5-haiku", prompt, max_tokens: 4096 },
+  });
+  return (result?.data?.output ?? result?.output ?? "").toString().trim();
+}
+
 export async function POST(request) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "GEMINI_API_KEY is not configured" }, { status: 500 });
+  if (!process.env.FAL_KEY) {
+    return NextResponse.json({ error: "FAL_KEY is not configured" }, { status: 500 });
   }
 
   try {
@@ -46,8 +54,6 @@ export async function POST(request) {
         { status: 400 }
       );
     }
-
-    const ai = new GoogleGenAI({ apiKey });
 
     const languageMap = {
       english: "English (Indian real-estate influencer style)",
@@ -119,18 +125,12 @@ Hurry! Inventory is limited. For a site visit, click the button below."
 
 Write the script now. Return ONLY the spoken script text with no headers, no labels, no formatting.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{ parts: [{ text: prompt }] }],
-    });
-
-    const rawScript = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const rawScript = await callFal(prompt);
     if (!rawScript || rawScript.length < 50) {
       return NextResponse.json({ error: "Failed to generate script" }, { status: 502 });
     }
 
     // ── TTS normalization pass ───────────────────────────────────────────────
-    // Convert numbers, abbreviations, symbols → spoken words so Veo pronounces correctly
     const ttsPrompt = `You are a text-to-speech normalization expert. Convert the following real estate ad script into natural spoken text that a TTS engine will pronounce correctly.
 
 RULES:
@@ -147,11 +147,7 @@ ${rawScript}`;
 
     let script = rawScript;
     try {
-      const ttsResponse = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ parts: [{ text: ttsPrompt }] }],
-      });
-      const normalized = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      const normalized = await callFal(ttsPrompt);
       if (normalized && normalized.length > 50) {
         script = normalized;
       }
@@ -165,7 +161,7 @@ ${rawScript}`;
       success: true,
       script,
       wordCount,
-      estimatedDuration: Math.round((wordCount / 140) * 60), // seconds at 140 wpm
+      estimatedDuration: Math.round((wordCount / 140) * 60),
     });
   } catch (error) {
     console.error("[VeoLongAd] generate-script error:", error);

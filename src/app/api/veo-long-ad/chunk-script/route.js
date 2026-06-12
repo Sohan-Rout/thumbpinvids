@@ -7,7 +7,7 @@ import { authOptions } from "@/lib/auth-config";
  * POST /api/veo-long-ad/chunk-script
  *
  * Beat Planner: analyzes the property script and outputs a 3-act beat plan.
- * Uses fal.ai any-llm (FAL_KEY) — falls back to Gemini if FAL_KEY is absent.
+ * Uses fal.ai any-llm (FAL_KEY). Model is user-selectable from the UI.
  *
  * Act 1 — Avatar Intro (~18-20s): HOOK + AVATAR_INTRO + AVATAR_WALK
  * Act 2 — Ken Burns Property (~18-22s): PROPERTY_VISUAL × 3 + FEATURE_BURST
@@ -27,34 +27,29 @@ import { authOptions } from "@/lib/auth-config";
 const MAX_BEATS = 10;
 const MAX_AVATAR_BEATS = 6;
 
-// fal.ai any-llm model to use for beat planning
-const FAL_MODEL = "anthropic/claude-3-5-haiku";
+const DEFAULT_FAL_MODEL = "anthropic/claude-3-5-haiku";
+const ALLOWED_FAL_MODELS = new Set([
+  "anthropic/claude-3-5-haiku",
+  "anthropic/claude-sonnet-4-5",
+  "anthropic/claude-opus-4",
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-pro",
+  "openai/gpt-4o-mini",
+  "openai/gpt-4o",
+  "meta-llama/llama-3.3-70b-instruct",
+]);
 
-async function callLLM(prompt) {
+async function callLLM(prompt, model = DEFAULT_FAL_MODEL) {
   const falKey = process.env.FAL_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!falKey) throw new Error("FAL_KEY not configured");
 
-  if (falKey) {
-    fal.config({ credentials: falKey });
-    const result = await fal.subscribe("fal-ai/any-llm", {
-      input: { model: FAL_MODEL, prompt, max_tokens: 4096 },
-    });
-    return (result?.data?.output ?? result?.output ?? "").toString().trim();
-  }
-
-  if (geminiKey) {
-    // Fallback to Gemini if no FAL_KEY
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey: geminiKey });
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{ parts: [{ text: prompt }] }],
-    });
-    return (response.candidates?.[0]?.content?.parts?.[0]?.text ?? "").trim();
-  }
-
-  throw new Error("No LLM API key configured — set FAL_KEY or GEMINI_API_KEY");
+  fal.config({ credentials: falKey });
+  const result = await fal.subscribe("fal-ai/any-llm", {
+    input: { model, prompt, max_tokens: 4096 },
+  });
+  return (result?.data?.output ?? result?.output ?? "").toString().trim();
 }
+
 
 export async function POST(request) {
   try {
@@ -66,6 +61,8 @@ export async function POST(request) {
     const formData = await request.formData();
     const script = (formData.get("script") || "").toString().trim();
     const language = (formData.get("language") || "english").toString();
+    const rawModel = (formData.get("model") || "").toString().trim();
+    const llmModel = ALLOWED_FAL_MODELS.has(rawModel) ? rawModel : DEFAULT_FAL_MODEL;
 
     if (!script || script.length < 20) {
       return NextResponse.json({ error: "script is required (min 20 chars)" }, { status: 400 });
@@ -134,17 +131,24 @@ PHYSICS & MOVEMENT RULES for ALL AVATAR BEATS:
 VEO PROMPT FORMAT for property beats (max 35 words):
 "[Room name with specific detail]. [One slow camera movement]. [Lighting mood]. 9:16 vertical. No people. No text. No music."
 
-NARRATION RULES — voiceover spoken by Sarvam TTS in ${langName}:
-- HOOK: 12-18 words — instant hook as presenter exits car. UGC energy.
-- AVATAR_INTRO: 22-30 words — property name, location, config, standout USP conversationally
-- AVATAR_WALK: 20-28 words — 2 wow features visible in entrance/lobby, like talking to a friend
-- PROPERTY_VISUAL: 18-26 words — describe the specific room: size, finishes, one distinctive detail. Natural, not brochure.
-- FEATURE_BURST: 10-14 words — punchy price or spec fact
-- AVATAR_RETURN: 20-26 words — limited inventory warning, FOMO
-- INVENTORY_ALERT: 14-20 words — urgent scarcity push
-- CTA: 18-24 words — clear action: call, book site visit, DM, link in bio
+NARRATION RULES — voiceover spoken by ElevenLabs TTS at speed 1.0 (~2.5 words/sec) in ${langName}:
+
+⚠️ STRICT TIMING: Each beat's narration must fit within its duration_seconds at 2.5 words/sec.
+⚠️ STRICT TOTAL: All narration combined must NOT exceed 120 words. Count words before finalising.
+
+Per-beat word budgets (HARD LIMITS — never exceed):
+- HOOK (5s): 8-10 words — snappy one-liner, instant hook as presenter walks toward camera
+- AVATAR_INTRO (6s): 12-15 words — property name, location, config, one standout USP
+- AVATAR_WALK (5s): 10-13 words — 2 wow features, like talking to a friend mid-walk
+- PROPERTY_VISUAL (5s each): 10-12 words — one room, one detail, natural not brochure
+- FEATURE_BURST (3s): 6-8 words — price or spec fact, punchy
+- AVATAR_RETURN (5s): 10-12 words — inventory warning, FOMO
+- INVENTORY_ALERT (4s): 8-10 words — urgent scarcity, one sharp sentence
+- CTA (5s): 10-12 words — clear action: call, site visit, DM, link in bio
+
 - Pure spoken words only — no stage directions, no quotation marks
-- Punctuate for natural spoken delivery: use commas for breathing pauses, em-dash (—) for dramatic emphasis, ellipsis (...) before a reveal or twist, exclamation mark for energy, question mark for genuine curiosity.
+- Punctuate for natural spoken delivery: commas for breath pauses, em-dash (—) for dramatic beat, ellipsis (...) before a reveal, exclamation mark for energy
+- Short punchy sentences land harder than long flowing ones — prefer impact over completeness
 
 Write all narration in English — a dedicated translation pass converts to the target language after beat planning.
 
@@ -269,36 +273,63 @@ PROPERTY SCRIPT TO PLAN:
 ${script}
 ---`;
 
-    const rawText = await callLLM(beatPlanPrompt);
-
-    if (!rawText) {
-      return NextResponse.json({ error: "Failed to generate beat plan" }, { status: 502 });
-    }
-
+    // Retry the beat plan up to 2 times if the LLM returns bad/incomplete output
     let beats = [];
     let voiceProfile = buildDefaultVoiceProfile(language);
     let fullNarration = script;
 
-    const cleanText = rawText.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      let rawText;
       try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed.beats) && parsed.beats.length > 0) {
-          beats = parsed.beats.slice(0, MAX_BEATS).map((b, i) => ({
-            index: i,
-            type: b.type || "PROPERTY_VISUAL",
-            duration_seconds: clamp(b.duration_seconds || 4, 2, 8),
-            visual_type: b.visual_type || "property",
-            veo_prompt: b.veo_prompt || null,
-            overlay_text: b.overlay_text || null,
-            narration: b.narration || null,
-            lipsync_expression: b.lipsync_expression || "friendly",
-          }));
+        rawText = await callLLM(beatPlanPrompt, llmModel);
+      } catch (llmErr) {
+        console.warn(`[VeoLongAd] Beat plan LLM attempt ${attempt + 1} threw:`, llmErr.message);
+        if (attempt === 2) throw llmErr;
+        continue;
+      }
+
+      if (!rawText) {
+        console.warn(`[VeoLongAd] Beat plan attempt ${attempt + 1} returned empty response`);
+        continue;
+      }
+
+      const cleanText = rawText.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed.beats) && parsed.beats.length > 0) {
+            const candidate = parsed.beats.slice(0, MAX_BEATS).map((b, i) => ({
+              index: i,
+              type: b.type || "PROPERTY_VISUAL",
+              duration_seconds: clamp(b.duration_seconds || 4, 2, 8),
+              visual_type: b.visual_type || "property",
+              veo_prompt: b.veo_prompt || null,
+              overlay_text: b.overlay_text || null,
+              narration: b.narration || null,
+              lipsync_expression: b.lipsync_expression || "friendly",
+            }));
+
+            // Reject if more than 2 beats are missing narration — retry
+            const missingNarration = candidate.filter((b) => !b.narration).length;
+            if (missingNarration > 2) {
+              console.warn(`[VeoLongAd] Beat plan attempt ${attempt + 1} had ${missingNarration} beats without narration — retrying`);
+              continue;
+            }
+
+            beats = candidate;
+            if (parsed.voice_profile) voiceProfile = parsed.voice_profile;
+            if (parsed.full_narration) fullNarration = parsed.full_narration;
+            break;
+          }
+        } catch (parseErr) {
+          console.warn(`[VeoLongAd] Beat plan attempt ${attempt + 1} JSON parse failed:`, parseErr.message);
         }
-        if (parsed.voice_profile) voiceProfile = parsed.voice_profile;
-        if (parsed.full_narration) fullNarration = parsed.full_narration;
-      } catch (_) {}
+      }
+    }
+
+    if (beats.length === 0) {
+      return NextResponse.json({ error: "Beat plan generation failed after 3 attempts — try again" }, { status: 502 });
     }
 
     // Enforce max presenter beat limit — downgrade excess avatar beats to property
@@ -318,18 +349,15 @@ ${script}
       return b;
     });
 
-    // Ensure all beats have veo_prompt and narration
-    beats = beats.map((b) => ({
-      ...b,
-      veo_prompt: b.visual_type === "property"
-        ? (b.veo_prompt || buildFallbackVeoPrompt(b.type))
-        : (b.veo_prompt || buildFallbackPresenterVeoPrompt(b.type)),
-      narration: b.narration || buildFallbackNarration(b.type),
-    }));
-
-    if (beats.length === 0) {
-      beats = buildFallbackBeats(script);
-    }
+    // Fill missing veo_prompts with fallbacks; drop beats with no narration rather than fabricating
+    beats = beats
+      .map((b) => ({
+        ...b,
+        veo_prompt: b.visual_type === "property"
+          ? (b.veo_prompt || buildFallbackVeoPrompt(b.type))
+          : (b.veo_prompt || buildFallbackPresenterVeoPrompt(b.type)),
+      }))
+      .filter((b) => b.narration);
 
     // ── Translation pass: convert narrations to native script ────────────
     // Runs only when language is non-English. Dedicated focused LLM call so
@@ -366,7 +394,7 @@ Return ONLY a valid JSON array — no markdown, no extra text:
 TEXTS TO TRANSLATE:
 ${JSON.stringify(toTranslate)}`;
 
-          const translRaw = await callLLM(translationPrompt);
+          const translRaw = await callLLM(translationPrompt, llmModel);
           const translClean = translRaw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
           const translMatch = translClean.match(/\[[\s\S]*\]/);
           if (translMatch) {
@@ -460,125 +488,4 @@ function buildFallbackPresenterVeoPrompt(type) {
   return map[type] || `Presenter walks through property, turns naturally to camera, speaks directly with energy and natural hand gestures. Medium close-up tracking shot. ${PHYSICS_SUFFIX}`;
 }
 
-function buildFallbackNarration(type) {
-  const map = {
-    HOOK: "Yaar, check out this property — you are not going to believe what is inside!",
-    AVATAR_INTRO: "I am standing right outside this incredible project — perfect location, stunning design, and everything you have been looking for in a home.",
-    AVATAR_WALK: "Just look at this entrance — marble floors, double height ceiling, and the lobby itself is like a five star hotel.",
-    AVATAR_SEGMENT: "I am here at this stunning property and honestly, this is one of the best I have seen in a long time.",
-    PROPERTY_VISUAL: "Look at the incredible attention to detail in every corner of this space.",
-    FEATURE_BURST: "Starting at just two crore — an unbelievable opportunity.",
-    AVATAR_RETURN: "Listen, I have to be real with you — there are only three units left at this price. Once those go, this offer is gone.",
-    INVENTORY_ALERT: "Prices are going up next week. This is genuinely your last chance at this rate. Do not wait.",
-    CTA: "If you are serious about this, call us today or book a site visit. Link is right there in the bio.",
-  };
-  return map[type] || "This property is absolutely stunning. You have to see it to believe it.";
-}
 
-function buildFallbackBeats(script) {
-  const words = script.split(/\s+/).filter(Boolean);
-  const q = Math.floor(words.length / 4);
-
-  return [
-    {
-      index: 0,
-      type: "HOOK",
-      duration_seconds: 5,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("HOOK"),
-      overlay_text: "Premium Property",
-      narration: buildFallbackNarration("HOOK"),
-      lipsync_expression: "friendly",
-    },
-    {
-      index: 1,
-      type: "AVATAR_INTRO",
-      duration_seconds: 6,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("AVATAR_INTRO"),
-      overlay_text: null,
-      narration: words.slice(0, Math.min(q, 28)).join(" ") || buildFallbackNarration("AVATAR_INTRO"),
-      lipsync_expression: "friendly",
-    },
-    {
-      index: 2,
-      type: "AVATAR_WALK",
-      duration_seconds: 5,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("AVATAR_WALK"),
-      overlay_text: null,
-      narration: buildFallbackNarration("AVATAR_WALK"),
-      lipsync_expression: "friendly",
-    },
-    {
-      index: 3,
-      type: "PROPERTY_VISUAL",
-      duration_seconds: 5,
-      visual_type: "property",
-      veo_prompt: "Grand living room with marble floors and double-height ceiling, slow left-to-right tracking shot, warm ambient lighting. 9:16 vertical. No people.",
-      overlay_text: null,
-      narration: "This living room is absolutely massive — marble floors, double-height ceiling, and enough space to comfortably seat the whole family.",
-      lipsync_expression: null,
-    },
-    {
-      index: 4,
-      type: "PROPERTY_VISUAL",
-      duration_seconds: 5,
-      visual_type: "property",
-      veo_prompt: "Master bedroom with floor-to-ceiling windows and balcony access, slow dolly push-in toward window. Soft morning light. 9:16 vertical. No people.",
-      overlay_text: null,
-      narration: "The master bedroom is huge — easily fits a king bed, has a walk-in wardrobe and glass doors that open directly onto the private balcony.",
-      lipsync_expression: null,
-    },
-    {
-      index: 5,
-      type: "PROPERTY_VISUAL",
-      duration_seconds: 5,
-      visual_type: "property",
-      veo_prompt: "Modern modular kitchen with island counter and premium appliances, slow right-to-left tracking shot. Warm under-cabinet lighting. 9:16 vertical. No people.",
-      overlay_text: null,
-      narration: "Look at this kitchen — fully modular with an island counter, imported fittings, and enough storage to make any home chef fall in love.",
-      lipsync_expression: null,
-    },
-    {
-      index: 6,
-      type: "FEATURE_BURST",
-      duration_seconds: 3,
-      visual_type: "property",
-      veo_prompt: "Premium property finishes close-up — marble countertop, brass hardware, wide-plank flooring. Shallow depth of field. 9:16 vertical. No people.",
-      overlay_text: "Starting ₹X Cr",
-      narration: buildFallbackNarration("FEATURE_BURST"),
-      lipsync_expression: null,
-    },
-    {
-      index: 7,
-      type: "AVATAR_RETURN",
-      duration_seconds: 5,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("AVATAR_RETURN"),
-      overlay_text: null,
-      narration: words.slice(q * 2, Math.min(q * 3, q * 2 + 26)).join(" ") || buildFallbackNarration("AVATAR_RETURN"),
-      lipsync_expression: "friendly",
-    },
-    {
-      index: 8,
-      type: "INVENTORY_ALERT",
-      duration_seconds: 4,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("INVENTORY_ALERT"),
-      overlay_text: "Only 3 Units Left",
-      narration: buildFallbackNarration("INVENTORY_ALERT"),
-      lipsync_expression: "professional",
-    },
-    {
-      index: 9,
-      type: "CTA",
-      duration_seconds: 5,
-      visual_type: "avatar",
-      veo_prompt: buildFallbackPresenterVeoPrompt("CTA"),
-      overlay_text: "Book Site Visit →",
-      narration: words.slice(-22).join(" ") || buildFallbackNarration("CTA"),
-      lipsync_expression: "professional",
-    },
-  ];
-}

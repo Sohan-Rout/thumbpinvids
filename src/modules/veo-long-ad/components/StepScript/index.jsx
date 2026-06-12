@@ -18,6 +18,7 @@ import {
   User,
   Mic,
   Play,
+  Bot,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,17 @@ const ELEVENLABS_VOICES = [
   { id: "TX3LPaxmHKxFdv7VOQHJ", label: "Liam (Male)"        },
 ];
 
+const LLM_MODELS = [
+  { id: "anthropic/claude-3-5-haiku",       label: "Claude 3.5 Haiku"   },
+  { id: "anthropic/claude-sonnet-4-5",      label: "Claude Sonnet 4.5"  },
+  { id: "anthropic/claude-opus-4",          label: "Claude Opus 4"      },
+  { id: "google/gemini-2.5-flash",          label: "Gemini 2.5 Flash"   },
+  { id: "google/gemini-2.5-pro",            label: "Gemini 2.5 Pro"     },
+  { id: "openai/gpt-4o-mini",              label: "GPT-4o Mini"         },
+  { id: "openai/gpt-4o",                  label: "GPT-4o"               },
+  { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B"    },
+];
+
 /**
  * StepScript — Step 2 for the Long-Form Veo Ad pipeline.
  *
@@ -58,7 +70,8 @@ export function StepScript({
   const [mode, setMode] = useState("manual"); // "manual" | "ai"
   const [language, setLanguage] = useState("english");
   const [tone, setTone] = useState("luxury");
-  const [elevenLabsVoice, setElevenLabsVoice] = useState("21m00Tcm4TlvDq8ikWAM");
+  const [elevenLabsVoice, setElevenLabsVoice] = useState(ELEVENLABS_VOICES[0].id);
+  const [llmModel, setLlmModel] = useState("anthropic/claude-3-5-haiku");
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const previewAudioRef = useRef(null);
 
@@ -177,6 +190,7 @@ export function StepScript({
       const formData = new FormData();
       formData.append("script", activeScript);
       formData.append("language", language);
+      formData.append("model", llmModel);
 
       await Promise.all(
         locationImages.slice(0, 5).map(async (img, i) => {
@@ -245,7 +259,7 @@ export function StepScript({
 
       <div className="flex items-center justify-between">
         {/* Language, Voice & Tone row */}
-        <div className="grid grid-cols-3 w-2xl gap-3">
+        <div className="grid grid-cols-4 w-2xl gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
               <Globe2 className="w-3.5 h-3.5" />
@@ -337,6 +351,29 @@ export function StepScript({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
+              <Bot className="w-3.5 h-3.5" />
+              AI Model
+            </label>
+            <div className="relative">
+              <select
+                value={llmModel}
+                onChange={(e) => setLlmModel(e.target.value)}
+                className="w-full appearance-none text-sm rounded-xl border border-neutral-200 bg-white px-3 py-2 pr-10 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#c7f038]/40 focus:border-[#c7f038]"
+              >
+                {LLM_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                  <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
             </div>
@@ -680,7 +717,7 @@ export function StepScript({
                 <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
                   Hybrid pipeline: <strong>{propBeats.length} property clip{propBeats.length !== 1 ? "s" : ""}</strong> + <strong>{avatarBeats.length} presenter clip{avatarBeats.length !== 1 ? "s" : ""}</strong> via Veo 3.1.
-                  {" "}Sarvam TTS voiceover mixed in. All beats generate <strong>in parallel</strong>. Final reel ~<strong>{totalSecs}s</strong>.
+                  {" "}ElevenLabs TTS voiceover mixed in. All beats generate <strong>in parallel</strong>. Final reel ~<strong>{totalSecs}s</strong>.
                   Estimated time: ~{Math.max(3, chunks.length * 2.5)} minutes.
                 </p>
               </div>

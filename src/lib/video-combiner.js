@@ -154,8 +154,16 @@ export async function combineVideos(videoUrls, options = {}) {
           ]);
           internalLog(`Image ${i + 1} converted to static video.`);
         } else {
-          await ffmpeg.writeFile(`input${i}.mp4`, data);
-          internalLog(`Wrote input${i}.mp4 (${data.length || data.byteLength} bytes)`);
+          // Strip audio from Kling/Hailuo clips — ElevenLabs voiceover is the only audio source.
+          await ffmpeg.writeFile(`raw${i}.mp4`, data);
+          internalLog(`Stripping audio from clip ${i + 1}...`);
+          await ffmpeg.exec([
+            "-i", `raw${i}.mp4`,
+            "-c:v", "copy",
+            "-an",
+            `input${i}.mp4`,
+          ]);
+          internalLog(`Wrote input${i}.mp4 (audio stripped, ${data.length || data.byteLength} bytes raw)`);
         }
       } catch (fetchErr) {
         internalLog(`CRITICAL: Failed to download clip ${i + 1}: ${fetchErr.message}`);
@@ -313,6 +321,7 @@ export async function combineVideos(videoUrls, options = {}) {
     internalLog("Cleaning up virtual FS...");
     for (let i = 0; i < videoUrls.length; i++) {
       try { await ffmpeg.deleteFile(`input${i}.mp4`); } catch {}
+      try { await ffmpeg.deleteFile(`raw${i}.mp4`); } catch {}
     }
     try { await ffmpeg.deleteFile("output.mp4"); } catch {}
     try { await ffmpeg.deleteFile("concat.txt"); } catch {}

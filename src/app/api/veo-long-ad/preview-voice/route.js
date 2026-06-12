@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
+import { ELEVENLABS_VOICE_SETTINGS } from "@/lib/elevenlabs-config";
 
 if (process.env.FAL_KEY) {
   fal.config({ credentials: process.env.FAL_KEY });
@@ -15,7 +16,7 @@ export async function POST(request) {
   }
 
   const PREVIEW_TEXTS = {
-    hindi:    "यह शानदार प्रॉपर्टी लग्जरी और आराम का परफेक्ट मेल है। आज ही साइट विजिट बुक करें!",
+    hindi:    "यह शानदार प्रॉपर्टी लग्जरी और आराम का परफेक्ट मेल है! — आज ही अपनी साइट विजिट बुक करें!",
     hinglish: "Yeh stunning property luxury aur comfort ka perfect blend hai. Aaj hi site visit book karein!",
     tamil:    "இந்த அழகான சொத்து ஆடம்பரம் மற்றும் வசதியின் சரியான கலவையை வழங்குகிறது. இன்றே தள வருகையை பதிவு செய்யுங்கள்!",
     telugu:   "ఈ అద్భుతమైన ఆస్తి విలాసం మరియు సౌకర్యం యొక్క మిశ్రమాన్ని అందిస్తుంది. ఈరోజే సైట్ విజిట్ బుక్ చేసుకోండి!",
@@ -31,10 +32,10 @@ export async function POST(request) {
     input: {
       text: previewText,
       voice: voiceId,
-      stability:        0.40,
-      similarity_boost: 0.75,
-      style:            0.30,
-      speed:            1.0,
+      stability:        ELEVENLABS_VOICE_SETTINGS.stability,
+      similarity_boost: ELEVENLABS_VOICE_SETTINGS.similarity_boost,
+      style:            ELEVENLABS_VOICE_SETTINGS.style,
+      speed:            ELEVENLABS_VOICE_SETTINGS.speed,
     },
     logs: false,
   });

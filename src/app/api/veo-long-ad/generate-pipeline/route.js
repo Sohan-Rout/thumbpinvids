@@ -10,6 +10,7 @@ import { consumeCreditsForAction, refundCreditsForAction } from "@/lib/credit-sy
 import { pendingJobs } from "@/lib/veo-pending-jobs";
 import sharp from "sharp";
 import { fal } from "@fal-ai/client";
+import { ELEVENLABS_VOICE_SETTINGS, ELEVENLABS_MODEL } from "@/lib/elevenlabs-config";
 
 if (process.env.FAL_KEY) {
   fal.config({ credentials: process.env.FAL_KEY });
@@ -59,20 +60,64 @@ if (process.env.FAL_KEY) {
  */
 
 
-// ── ElevenLabs voice settings ─────────────────────────────────────────────────
-// Tune these to change how the voice sounds:
-//   stability        0.0–1.0  lower = more dynamic/emotional, higher = more consistent
-//   similarity_boost 0.0–1.0  higher = more faithful to the original voice clone
-//   style            0.0–1.0  higher = more expressive delivery (v2 models only)
-//   speed            0.7–1.2  speaking rate — 1.0 is natural, 1.1 is slightly punchy for ads
-const ELEVENLABS_VOICE_SETTINGS = {
-  stability:        0.40,
-  similarity_boost: 0.65,
-  style:            0.00,
-  use_speaker_boost: true,
-  speed:            0.90,
+// Voice settings + model imported from @/lib/elevenlabs-config — edit there to tune both routes.
+
+// Fallback motion prompts used only when the beat has no veo_prompt from chunk-script.
+// The chunk-script generates narration-specific veo_prompts that are preferred.
+const AVATAR_BEAT_FALLBACK_PROMPTS = {
+  HOOK:
+    "Presenter already stepping out of white luxury SUV, door swinging open mid-motion, " +
+    "walks confidently toward camera with warm smile. Smooth cinematic push-in following walk. " +
+    "Golden hour warm light. Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
+  AVATAR_INTRO:
+    "Presenter standing confidently outside grand property entrance, addresses camera directly " +
+    "with genuine enthusiasm and open hand gestures. Static medium close-up, property façade visible behind. " +
+    "Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
+  AVATAR_WALK:
+    "Presenter walks through grand entrance lobby, turns to camera mid-stride with expressive hand gesture. " +
+    "Tracking medium shot follows walk, luxury interior visible. " +
+    "Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
+  AVATAR_RETURN:
+    "Presenter walks back into frame from side, settles to face camera with renewed energy and urgent expression. " +
+    "Medium close-up as body settles after entry. " +
+    "Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
+  INVENTORY_ALERT:
+    "Presenter leans slightly toward camera with focused urgent expression, raises one finger for emphasis. " +
+    "Slight push-in. Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
+  CTA:
+    "Presenter stops and turns directly to camera with warm confident smile, extends one open hand toward viewer. " +
+    "Body weight settles naturally, property softly blurred behind. " +
+    "Natural physics: weighted walk, clothing micro-movement, hair settles. 9:16 vertical portrait.",
 };
-const ELEVENLABS_MODEL = "eleven_multilingual_v2"; // supports Hindi, Hinglish, and English
+
+// Avatar resize dimensions per beat type — progressive scale simulates shot-to-shot movement:
+// small (far, just exited car) → larger (close, direct address → CTA gesture slightly back).
+const AVATAR_SIZES_BY_BEAT = {
+  HOOK:            { w: 720, h: 1360 },
+  AVATAR_INTRO:    { w: 810, h: 1530 },
+  AVATAR_WALK:     { w: 855, h: 1615 },
+  AVATAR_RETURN:   { w: 840, h: 1590 },
+  INVENTORY_ALERT: { w: 900, h: 1700 },
+  CTA:             { w: 870, h: 1645 },
+};
+
+async function generateKlingAvatarShot(startImageUrl, beatType, veoPrompt) {
+  if (!process.env.FAL_KEY) throw new Error("FAL_KEY not configured");
+  const prompt = veoPrompt || AVATAR_BEAT_FALLBACK_PROMPTS[beatType] || AVATAR_BEAT_FALLBACK_PROMPTS.AVATAR_INTRO;
+  const result = await fal.subscribe("fal-ai/kling-video/v3/standard/image-to-video", {
+    input: {
+      image_url: startImageUrl,
+      prompt,
+      duration: "5",
+      aspect_ratio: "9:16",
+      enable_audio: false,
+    },
+    logs: false,
+  });
+  const videoUrl = result?.data?.video?.url;
+  if (!videoUrl) throw new Error("Kling returned no video URL");
+  return videoUrl;
+}
 
 async function generateHailuoBroll(imageUrl, prompt) {
   if (!process.env.FAL_KEY) throw new Error("FAL_KEY not configured");
@@ -167,6 +212,8 @@ export async function POST(request) {
       if (s) avatarImages.push(s);
     }
 
+    const backgroundImageFile = formData.get("backgroundImage") || null;
+
     // ── Debit credits ───────────────────────────────────────────────────────
     const creditResult = await consumeCreditsForAction({
       userId,
@@ -186,6 +233,10 @@ export async function POST(request) {
     const locationBufs = [];
     for (const f of locationImages.slice(0, 4)) {
       try { locationBufs.push(Buffer.from(await f.arrayBuffer())); } catch (_) {}
+    }
+    let backgroundBuf = null;
+    if (backgroundImageFile) {
+      try { backgroundBuf = Buffer.from(await backgroundImageFile.arrayBuffer()); } catch (_) {}
     }
 
 
@@ -307,9 +358,11 @@ export async function POST(request) {
               message: `Generating full ${narrationBeats.length}-beat voiceover via ElevenLabs…`,
             });
 
-            // Join all narration lines with double-newlines so ElevenLabs inserts
-            // natural inter-beat pauses without extra configuration.
-            const fullScript = narrationBeats.map((b) => b.narration.trim()).join("\n\n");
+            // Format each beat with ElevenLabs pacing tags, then join with em-dash
+            // beat breaks so the AI reads across clips with natural punchy pacing.
+            const fullScript = narrationBeats
+              .map((b) => applyElevenLabsPacing(b.narration.trim()))
+              .join(" — ");
             console.log(`[VeoLongAd] Full TTS script (${fullScript.length} chars): "${fullScript.slice(0, 120)}…"`);
 
             try {
@@ -369,15 +422,53 @@ export async function POST(request) {
                 clipUrl = imgUrl; // fallback: static image → client Ken Burns
               }
             } else {
-              // Avatar beat — black screen placeholder (Veo temporarily disabled for design phase)
-              try {
-                const blackBuf = await sharp({
-                  create: { width: 1080, height: 1920, channels: 3, background: { r: 0, g: 0, b: 0 } },
-                }).jpeg({ quality: 85 }).toBuffer();
-                const key = buildUserKey(userId, "images", "jpg", `black-beat-${beat.index}`);
-                clipUrl = await uploadToR2(blackBuf, key, "image/jpeg");
-              } catch (beatErr) {
-                console.error(`[VeoLongAd] Black screen gen failed for beat ${beat.index}:`, beatErr.message);
+              // Avatar beat — composite presenter on background, animate with Kling.
+              // Avatar is resized per beat type to simulate progressive movement
+              // (small/far for HOOK → large/close for INVENTORY_ALERT/CTA).
+              if (avatarBufs.length > 0 && backgroundBuf) {
+                try {
+                  const avatarBuf = avatarBufs[beat.index % avatarBufs.length];
+                  const avatarSize = AVATAR_SIZES_BY_BEAT[beat.type] || { w: 900, h: 1700 };
+
+                  const bg = await sharp(backgroundBuf)
+                    .resize(1080, 1920, { fit: "cover", position: "centre" })
+                    .toBuffer();
+                  const avatarResized = await sharp(avatarBuf)
+                    .resize(avatarSize.w, avatarSize.h, { fit: "inside" })
+                    .toBuffer();
+                  const compositeBuf = await sharp(bg)
+                    .composite([{ input: avatarResized, gravity: "south", blend: "over" }])
+                    .jpeg({ quality: 88 })
+                    .toBuffer();
+                  const compositeKey = buildUserKey(userId, "images", "jpg", `avatar-composite-${beat.index}`);
+                  const compositeUrl = await uploadToR2(compositeBuf, compositeKey, "image/jpeg");
+                  console.log(`[VeoLongAd] Kling avatar beat ${beat.index} (${beat.type}): ${compositeUrl}`);
+                  // Use the beat's narration-specific veo_prompt from chunk-script (preferred),
+                  // so Kling motion matches exactly what the avatar is saying in that beat.
+                  const falVideoUrl = await generateKlingAvatarShot(compositeUrl, beat.type, beat.veo_prompt);
+                  const videoRes = await fetch(falVideoUrl);
+                  if (!videoRes.ok) throw new Error(`Failed to fetch Kling video: ${videoRes.status}`);
+                  const videoBuf = Buffer.from(await videoRes.arrayBuffer());
+                  const key = buildUserKey(userId, "videos", "mp4", `avatar-beat-${beat.index}`);
+                  clipUrl = await uploadToR2(videoBuf, key, "video/mp4");
+                  console.log(`[VeoLongAd] Kling avatar beat ${beat.index} uploaded: ${clipUrl}`);
+                } catch (klingErr) {
+                  console.error(`[VeoLongAd] Kling failed for beat ${beat.index}, falling back to avatar image:`, klingErr.message);
+                }
+              }
+
+              // Fallback: use avatar image if Kling failed or no background uploaded
+              if (!clipUrl && avatarBufs.length > 0) {
+                try {
+                  const fallbackBuf = await sharp(avatarBufs[beat.index % avatarBufs.length])
+                    .resize(1080, 1920, { fit: "cover", position: "top" })
+                    .jpeg({ quality: 88 })
+                    .toBuffer();
+                  const key = buildUserKey(userId, "images", "jpg", `avatar-fallback-${beat.index}`);
+                  clipUrl = await uploadToR2(fallbackBuf, key, "image/jpeg");
+                } catch (fallbackErr) {
+                  console.error(`[VeoLongAd] Avatar fallback failed for beat ${beat.index}:`, fallbackErr.message);
+                }
               }
             }
 
@@ -407,7 +498,27 @@ export async function POST(request) {
 
           // ── Stage 4: Collect, save, emit ─────────────────────────────────
           const clipUrls = clipResults.filter(Boolean);
-          const totalDuration = workBeats.reduce((s, b) => s + (b.duration_seconds || 4), 0);
+          const beatDurations = workBeats.map((b) => b.duration_seconds || 4);
+          let totalDuration = beatDurations.reduce((s, d) => s + d, 0);
+
+          // Pad to 60 seconds with a black screen if the reel is shorter
+          const TARGET_DURATION = 60;
+          const padSeconds = Math.max(0, TARGET_DURATION - totalDuration);
+          if (padSeconds >= 1 && clipUrls.length > 0) {
+            try {
+              const blackBuf = await sharp({
+                create: { width: 1080, height: 1920, channels: 3, background: { r: 0, g: 0, b: 0 } },
+              }).jpeg({ quality: 85 }).toBuffer();
+              const padKey = buildUserKey(userId, "images", "jpg", "pad-black");
+              const padUrl = await uploadToR2(blackBuf, padKey, "image/jpeg");
+              clipUrls.push(padUrl);
+              beatDurations.push(padSeconds);
+              totalDuration = TARGET_DURATION;
+              console.log(`[VeoLongAd] Added ${padSeconds}s black pad to reach ${TARGET_DURATION}s`);
+            } catch (padErr) {
+              console.warn("[VeoLongAd] Failed to add black pad:", padErr.message);
+            }
+          }
 
           send({ type: "uploading", message: "Saving to your Asset Library…" });
 
@@ -436,6 +547,7 @@ export async function POST(request) {
           send({
             type: "video_ready",
             clipUrls,
+            durations: beatDurations,
             fullAudioUrl,
             audioUrls: null,
             videoUrl: clipUrls[0] || null,
@@ -500,6 +612,35 @@ export async function POST(request) {
   }
 }
 
+// ── ElevenLabs pacing formatter ──────────────────────────────────────────────
+// High-impact words that get a micro-breath ellipsis before them.
+// Covers English luxury vocab that appears in English, Hinglish, and mixed scripts.
+const PACING_BREATH_WORDS_EN = [
+  "luxury", "luxurious", "premium", "exclusive", "stunning", "breathtaking",
+  "magnificent", "spectacular", "elegant", "exquisite", "opulent", "lavish",
+  "grand", "majestic", "prime", "iconic", "serene", "tranquil", "spacious",
+  "contemporary", "ultra-modern", "world-class", "prestigious", "dream",
+  "perfect", "ultimate", "unmatched", "extraordinary",
+  // Hinglish romanizations
+  "shandar", "aalishan", "bhavya", "behtareen", "khubsurat", "sapno",
+];
+
+// Hindi Devanagari high-impact words (no \b word boundary — Unicode words need lookaround)
+const PACING_BREATH_WORDS_HI = [
+  "शानदार", "आलीशान", "भव्य", "लग्जरी", "प्रीमियम", "एक्सक्लूसिव",
+  "खूबसूरत", "बेहतरीन", "अद्भुत", "परफेक्ट", "स्टनिंग", "शाही",
+  "विशाल", "अनोखा", "सपनों", "शानदार",
+];
+
+const PACING_BREATH_RE_EN = new RegExp(`\\b(${PACING_BREATH_WORDS_EN.join("|")})\\b`, "gi");
+const PACING_BREATH_RE_HI = new RegExp(`(${PACING_BREATH_WORDS_HI.join("|")})`, "g");
+
+function applyElevenLabsPacing(text) {
+  return text
+    .replace(PACING_BREATH_RE_EN, "...$1")
+    .replace(PACING_BREATH_RE_HI, "...$1");
+}
+
 // ── ElevenLabs TTS via fal (multilingual-v2) ─────────────────────────────────
 // Model: fal-ai/elevenlabs/tts/multilingual-v2
 // Input: flat fields — voice, stability, similarity_boost, style, speed
@@ -517,7 +658,7 @@ async function generateElevenLabsTTS(text, voiceId) {
     logs: false,
   });
 
-  const audioUrl = result?.data?.audio?.url;
+  const audioUrl = result?.data?.audio_url || result?.data?.audio?.url;
   if (!audioUrl) throw new Error(`fal ElevenLabs returned no audio URL. keys: ${Object.keys(result?.data || {}).join(", ")}`);
 
   const res = await fetch(audioUrl);
