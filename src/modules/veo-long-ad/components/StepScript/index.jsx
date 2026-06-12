@@ -4,7 +4,6 @@ import { useState, useRef } from "react";
 import {
   Wand2,
   FileText,
-  ChevronRight,
   ChevronLeft,
   ChevronDown,
   ChevronUp,
@@ -15,15 +14,43 @@ import {
   Info,
   Sparkles,
   Globe2,
+  Video,
+  User,
+  Mic,
+  Play,
+  Bot,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { LANGUAGES, TONES } from "@/utils/constants";
 import { compressImage } from "@/utils/compress-image";
 
-const MAX_CHUNKS = 10;
 const MIN_SCRIPT_WORDS = 20;
 const MAX_SCRIPT_WORDS = 500;
+
+// ElevenLabs voices — swap any id for a voice from your ElevenLabs account
+// stability / similarity / style are tuned in the API route (ELEVENLABS_VOICE_SETTINGS)
+const ELEVENLABS_VOICES = [
+  { id: "dVTC43Yewy5fAIcmsISI", label: "Anvi (Female)"    },
+  { id: "K2Byg54sHB1oHegvENtI", label: "Kanika (Female)"     },
+  { id: "XB0fDUnXU5powFXDhCwa", label: "Charlotte (Female)" },
+  { id: "pMsXgVXv3BLzUgSXRplE", label: "Serena (Female)"    },
+  { id: "DdD5pVl1QDeeI6MMtYbk", label: "Abhay (Male)"        },
+  { id: "JBFqnCBsd6RMkjVDRZzb", label: "George (Male)"      },
+  { id: "onwK4e9ZLuTAKqWW03F9", label: "Daniel (Male)"      },
+  { id: "TX3LPaxmHKxFdv7VOQHJ", label: "Liam (Male)"        },
+];
+
+const LLM_MODELS = [
+  { id: "anthropic/claude-3-5-haiku",       label: "Claude 3.5 Haiku"   },
+  { id: "anthropic/claude-sonnet-4-5",      label: "Claude Sonnet 4.5"  },
+  { id: "anthropic/claude-opus-4",          label: "Claude Opus 4"      },
+  { id: "google/gemini-2.5-flash",          label: "Gemini 2.5 Flash"   },
+  { id: "google/gemini-2.5-pro",            label: "Gemini 2.5 Pro"     },
+  { id: "openai/gpt-4o-mini",              label: "GPT-4o Mini"         },
+  { id: "openai/gpt-4o",                  label: "GPT-4o"               },
+  { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B"    },
+];
 
 /**
  * StepScript — Step 2 for the Long-Form Veo Ad pipeline.
@@ -43,6 +70,10 @@ export function StepScript({
   const [mode, setMode] = useState("manual"); // "manual" | "ai"
   const [language, setLanguage] = useState("english");
   const [tone, setTone] = useState("luxury");
+  const [elevenLabsVoice, setElevenLabsVoice] = useState(ELEVENLABS_VOICES[0].id);
+  const [llmModel, setLlmModel] = useState("anthropic/claude-3-5-haiku");
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const previewAudioRef = useRef(null);
 
   // ── Manual mode state ────────────────────────────────────────────────────
   const [manualScript, setManualScript] = useState("");
@@ -62,8 +93,9 @@ export function StepScript({
   const [scriptWordCount, setScriptWordCount] = useState(0);
   const [scriptEstDuration, setScriptEstDuration] = useState(0);
 
-  // ── Chunking state ───────────────────────────────────────────────────────
-  const [chunks, setChunks] = useState([]);
+  // ── Beat plan state ──────────────────────────────────────────────────────
+  const [beats, setBeats] = useState([]);
+  const [chunks, setChunks] = useState([]); // legacy compat
   const [masterVoicePrompt, setMasterVoicePrompt] = useState("");
   const [presenterDescription, setPresenterDescription] = useState("");
   const [chunking, setChunking] = useState(false);
@@ -75,6 +107,34 @@ export function StepScript({
   const words = activeScript.trim().split(/\s+/).filter(Boolean);
   const wordCount = words.length;
   const isScriptReady = wordCount >= MIN_SCRIPT_WORDS;
+
+  const handlePreviewVoice = async () => {
+    if (previewingVoice) return;
+    setPreviewingVoice(true);
+    try {
+      const voice = ELEVENLABS_VOICES.find((v) => v.id === elevenLabsVoice);
+      const res = await fetch("/api/veo-long-ad/preview-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceId: elevenLabsVoice, voiceLabel: voice?.label?.split(" (")[0], language }),
+      });
+      if (!res.ok) throw new Error("Preview failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        URL.revokeObjectURL(previewAudioRef.current.src);
+      }
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+      audio.onended = () => setPreviewingVoice(false);
+      audio.onerror = () => setPreviewingVoice(false);
+      await audio.play();
+    } catch (err) {
+      toast.error("Could not preview voice", { description: err.message });
+      setPreviewingVoice(false);
+    }
+  };
 
   const handleQaChange = (key, value) => {
     setQaAnswers((prev) => ({ ...prev, [key]: value }));
@@ -130,6 +190,7 @@ export function StepScript({
       const formData = new FormData();
       formData.append("script", activeScript);
       formData.append("language", language);
+      formData.append("model", llmModel);
 
       await Promise.all(
         locationImages.slice(0, 5).map(async (img, i) => {
@@ -153,11 +214,15 @@ export function StepScript({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chunking failed");
 
+      setBeats(data.beats || []);
       setChunks(data.chunks || []);
-      setMasterVoicePrompt(data.masterVoicePrompt || "");
+      setMasterVoicePrompt(data.masterVoicePrompt || data.voiceProfile || "");
       setPresenterDescription(data.presenterDescription || "");
+
+      const avatarCount = (data.beats || []).filter((b) => b.visual_type === "avatar").length;
+      const propCount = (data.beats || []).filter((b) => b.visual_type === "property").length;
       toast.success(
-        `Split into ${data.totalChunks} chunk${data.totalChunks !== 1 ? "s" : ""} — ~${data.totalEstimatedDuration}s video`,
+        `Beat plan ready — ${data.totalChunks} beats (~${data.totalEstimatedDuration}s) · ${propCount} property · ${avatarCount} avatar`,
       );
 
       // Scroll to chunks
@@ -175,9 +240,9 @@ export function StepScript({
   // ── Generate video ────────────────────────────────────────────────────────
   const handleGenerate = () => {
     if (chunks.length === 0) {
-      return toast.error("Please chunk the script first.");
+      return toast.error("Please plan the beats first.");
     }
-    onGenerate({ chunks, masterVoicePrompt, presenterDescription, language });
+    onGenerate({ beats, chunks, masterVoicePrompt, voiceProfile: masterVoicePrompt, presenterDescription, language, elevenLabsVoice });
   };
 
   return (
@@ -193,8 +258,8 @@ export function StepScript({
       </div>
 
       <div className="flex items-center justify-between">
-        {/* Language & Tone row */}
-        <div className="grid grid-cols-2 w-sm gap-3">
+        {/* Language, Voice & Tone row */}
+        <div className="grid grid-cols-4 w-2xl gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
               <Globe2 className="w-3.5 h-3.5" />
@@ -213,21 +278,51 @@ export function StepScript({
                   </option>
                 ))}
               </select>
-
-              {/* Custom arrow */}
               <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M6 8l4 4 4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
             </div>
           </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
+              <Mic className="w-3.5 h-3.5" />
+              Voice
+            </label>
+            <div className="flex gap-1.5">
+              <div className="relative flex-1">
+                <select
+                  value={elevenLabsVoice}
+                  onChange={(e) => { setElevenLabsVoice(e.target.value); setPreviewingVoice(false); }}
+                  className="w-full appearance-none text-sm rounded-xl border border-neutral-200 bg-white px-3 py-2 pr-10 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#c7f038]/40 focus:border-[#c7f038]"
+                >
+                  {ELEVENLABS_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                    <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handlePreviewVoice}
+                disabled={previewingVoice}
+                title="Preview this voice"
+                className="shrink-0 flex items-center justify-center w-9 h-9 rounded-xl border border-neutral-200 bg-white shadow-sm text-neutral-500 hover:text-[#c7f038] hover:border-[#c7f038] disabled:opacity-50 transition-colors"
+              >
+                {previewingVoice
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Play className="w-3.5 h-3.5 ml-0.5" />
+                }
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
@@ -256,6 +351,29 @@ export function StepScript({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
+              <Bot className="w-3.5 h-3.5" />
+              AI Model
+            </label>
+            <div className="relative">
+              <select
+                value={llmModel}
+                onChange={(e) => setLlmModel(e.target.value)}
+                className="w-full appearance-none text-sm rounded-xl border border-neutral-200 bg-white px-3 py-2 pr-10 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#c7f038]/40 focus:border-[#c7f038]"
+              >
+                {LLM_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                  <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
             </div>
@@ -512,82 +630,99 @@ export function StepScript({
           </div>
 
           <div className="rounded-2xl border border-border/50 bg-muted/10 p-1 space-y-1">
-            {chunks.map((chunk, idx) => (
-              <div key={idx} className="rounded-xl overflow-hidden">
-                <button
-                  onClick={() =>
-                    setExpandedChunk(expandedChunk === idx ? null : idx)
-                  }
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/30 transition-colors"
-                >
-                  {/* Progress circle */}
-                  <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center shrink-0">
-                    <span className="text-[10px] font-bold text-primary">
-                      {idx + 1}
-                    </span>
-                  </div>
+            {chunks.map((chunk, idx) => {
+              const isAvatar = chunk.visualType === "avatar";
+              const beatType = chunk.beatType || "PROPERTY_VISUAL";
+              const beatColors = {
+                HOOK: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+                AVATAR_SEGMENT: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+                PROPERTY_VISUAL: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+                FEATURE_BURST: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+                CTA: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400",
+              };
+              const colorClass = beatColors[beatType] || beatColors.PROPERTY_VISUAL;
 
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate text-foreground">
-                      {chunk.text.slice(0, 70)}
-                      {chunk.text.length > 70 ? "…" : ""}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      ~{chunk.estimatedSeconds}s ·{" "}
-                      {chunk.cameraDirection?.slice(0, 50) ||
-                        "Cinematic exterior"}
-                    </p>
-                  </div>
+              return (
+                <div key={idx} className="rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => setExpandedChunk(expandedChunk === idx ? null : idx)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/30 transition-colors"
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${colorClass}`}>
+                      {isAvatar
+                        ? <User className="w-3 h-3" />
+                        : <Video className="w-3 h-3" />
+                      }
+                    </div>
 
-                  {expandedChunk === idx ? (
-                    <ChevronUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  )}
-                </button>
-
-                {expandedChunk === idx && (
-                  <div className="px-3 pb-3 space-y-2">
-                    <div className="rounded-lg bg-muted/30 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-1">
-                        Spoken Text
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${colorClass}`}>
+                          {beatType.replace("_", " ")}
+                        </span>
+                        {chunk.overlayText && (
+                          <span className="text-[9px] text-muted-foreground truncate max-w-30">
+                            "{chunk.overlayText}"
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-medium truncate text-foreground">
+                        {chunk.text.slice(0, 65)}{chunk.text.length > 65 ? "…" : ""}
                       </p>
-                      <p className="text-xs text-foreground leading-relaxed">
-                        "{chunk.text}"
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        ~{chunk.estimatedSeconds}s · {isAvatar ? "Veo presenter" : "Veo property clip"}
                       </p>
                     </div>
-                    {chunk.veoPrompt && (
-                      <div className="rounded-lg bg-violet-50/50 dark:bg-violet-900/10 border border-violet-200/40 dark:border-violet-700/20 p-2.5">
-                        <p className="text-[10px] text-violet-600 dark:text-violet-400 font-medium uppercase tracking-wide mb-1">
-                          Veo Director Prompt
-                        </p>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-line">
-                          {chunk.veoPrompt.slice(0, 400)}
-                          {chunk.veoPrompt.length > 400 ? "…" : ""}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                    {expandedChunk === idx
+                      ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    }
+                  </button>
+
+                  {expandedChunk === idx && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {chunk.narration && (
+                        <div className="rounded-lg bg-blue-50/50 dark:bg-blue-900/10 border border-blue-200/40 p-2.5">
+                          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wide mb-1">
+                            Voiceover (ElevenLabs)
+                          </p>
+                          <p className="text-xs text-foreground leading-relaxed">"{chunk.narration}"</p>
+                        </div>
+                      )}
+                      {chunk.veoPrompt && (
+                        <div className="rounded-lg bg-violet-50/50 dark:bg-violet-900/10 border border-violet-200/40 p-2.5">
+                          <p className="text-[10px] text-violet-600 dark:text-violet-400 font-medium uppercase tracking-wide mb-1">
+                            Veo Shot Prompt
+                          </p>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            {chunk.veoPrompt.slice(0, 300)}{chunk.veoPrompt.length > 300 ? "…" : ""}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-700/20 dark:bg-emerald-900/10 p-3 flex gap-2">
-            <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
-              Veo will generate a{" "}
-              <strong>{chunks[0]?.estimatedSeconds || 8}s base clip</strong>{" "}
-              then extend it {chunks.length - 1} time
-              {chunks.length - 1 !== 1 ? "s" : ""}, producing a final{" "}
-              <strong>
-                ~{chunks.reduce((s, c) => s + (c.estimatedSeconds || 8), 0)}
-                -second long-form ad
-              </strong>
-              . Each extension takes 2–3 minutes. Total estimated time: ~
-              {Math.round(chunks.length * 2.5)} minutes.
-            </p>
-          </div>
+          {/* Pipeline info */}
+          {(() => {
+            const avatarBeats = chunks.filter((c) => c.visualType === "avatar");
+            const propBeats = chunks.filter((c) => c.visualType !== "avatar");
+            const totalSecs = chunks.reduce((s, c) => s + (c.estimatedSeconds || 4), 0);
+            return (
+              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-700/20 dark:bg-emerald-900/10 p-3 flex gap-2">
+                <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
+                  Hybrid pipeline: <strong>{propBeats.length} property clip{propBeats.length !== 1 ? "s" : ""}</strong> + <strong>{avatarBeats.length} presenter clip{avatarBeats.length !== 1 ? "s" : ""}</strong> via Veo 3.1.
+                  {" "}ElevenLabs TTS voiceover mixed in. All beats generate <strong>in parallel</strong>. Final reel ~<strong>{totalSecs}s</strong>.
+                  Estimated time: ~{Math.max(3, chunks.length * 2.5)} minutes.
+                </p>
+              </div>
+            );
+          })()}
         </div>
       )}
 

@@ -13,19 +13,34 @@ import {
   Play,
   Pause,
   FileEdit,
+  Mic,
+  Video,
+  User,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { compressImage, compressBlob } from "@/utils/compress-image";
+import { combineVideos, uploadCombinedVideo } from "@/lib/video-combiner";
 
 const STATUS = {
   IDLE: "idle",
   AWAITING_APPROVAL: "awaiting_approval",
+  VOICE_GENERATING: "voice_generating",
   GENERATING_BASE: "generating_base",
   EXTENDING: "extending",
+  COMBINING: "combining",
   UPLOADING: "uploading",
   DONE: "done",
   ERROR: "error",
+};
+
+const BEAT_COLORS = {
+  HOOK: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  AVATAR_SEGMENT: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  PROPERTY_VISUAL: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+  FEATURE_BURST: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
+  CTA: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400",
 };
 
 /**
@@ -40,13 +55,20 @@ const STATUS = {
  */
 export function GenerationProgress({ generationParams, onReset }) {
   const {
+    beats = [],
     chunks = [],
     masterVoicePrompt = "",
+    voiceProfile = "",
     presenterDescription = "",
     language = "english",
+    elevenLabsVoice = "21m00Tcm4TlvDq8ikWAM",
+    backgroundImage = null,
     locationImages = [],
     avatarImages = [],
   } = generationParams || {};
+
+  // Prefer beats array; fall back to legacy chunks
+  const beatPlan = beats.length > 0 ? beats : chunks;
 
   const [status, setStatus] = useState(STATUS.IDLE);
   const [currentChunkIdx, setCurrentChunkIdx] = useState(-1);
@@ -54,6 +76,7 @@ export function GenerationProgress({ generationParams, onReset }) {
   const [chunkClipUrls, setChunkClipUrls] = useState({});
   const [message, setMessage] = useState("");
   const [videoUrl, setVideoUrl] = useState(null);
+  const [combineProgress, setCombineProgress] = useState("");
   const [totalDuration, setTotalDuration] = useState(0);
   const [error, setError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -68,12 +91,13 @@ export function GenerationProgress({ generationParams, onReset }) {
   const videoRef = useRef(null);
   const hasStarted = useRef(false);
   const countdownRef = useRef(null);
+  const pendingClipUrls = useRef(null);
 
-  const totalChunks = chunks.length;
+  const totalChunks = beatPlan.length;
 
   // ── Auto-start SSE pipeline on mount ─────────────────────────────────────
   useEffect(() => {
-    if (hasStarted.current || !chunks.length) return;
+    if (hasStarted.current || !beatPlan.length) return;
     hasStarted.current = true;
     startPipeline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,20 +109,66 @@ export function GenerationProgress({ generationParams, onReset }) {
     };
   }, []);
 
+  const triggerCombine = async (clipUrls, audioUrls, fullAudioUrl, serverDurations) => {
+    if (!clipUrls || clipUrls.length === 0) return;
+    setStatus(STATUS.COMBINING);
+    setCombineProgress("Loading FFmpeg…");
+
+    const hasAudio = !!(fullAudioUrl || audioUrls?.some(Boolean));
+    if (!hasAudio) {
+      console.warn("[GenerationProgress] No audio URL received — video will be silent.");
+      toast.warning("No audio generated — video will be silent. Check server logs for TTS errors.", { duration: 8000 });
+    } else {
+      console.log("[GenerationProgress] fullAudioUrl:", fullAudioUrl);
+    }
+
+    try {
+      const durations = serverDurations || beatPlan.map((b) => b.duration_seconds || b.estimatedSeconds || null);
+      const { blobUrl, blob } = await combineVideos(clipUrls, {
+        onProgress: (msg) => setCombineProgress(msg),
+        durations,
+        audioUrls: fullAudioUrl ? null : (audioUrls || null),
+        fullAudioUrl: fullAudioUrl || null,
+      });
+
+      // Upload to R2 so the URL is permanent and shareable on any platform
+      setCombineProgress("Saving final reel…");
+      try {
+        const { url: r2Url } = await uploadCombinedVideo(blob, `hybrid-reel-${Date.now()}.mp4`);
+        setVideoUrl(r2Url);
+      } catch {
+        setVideoUrl(blobUrl);
+      }
+
+      setStatus(STATUS.DONE);
+      toast.success("🎬 Reel assembled! Ready to download.");
+    } catch (err) {
+      console.error("[GenerationProgress] Combine failed:", err);
+      setVideoUrl(clipUrls[0]);
+      setStatus(STATUS.DONE);
+      toast.warning("Could not auto-combine clips — showing first clip.");
+    }
+  };
+
   const startPipeline = async () => {
     setStatus(STATUS.IDLE);
     setCurrentChunkIdx(0);
     setCompletedChunks([]);
     setVideoUrl(null);
+    pendingClipUrls.current = null;
     setError(null);
     setMessage("Starting generation pipeline…");
 
     try {
       const formData = new FormData();
+      // Send beats (new format) + chunks (legacy fallback)
+      if (beats.length > 0) formData.append("beats", JSON.stringify(beats));
       formData.append("chunks", JSON.stringify(chunks));
-      formData.append("masterVoicePrompt", masterVoicePrompt);
+      formData.append("voiceProfile", voiceProfile || masterVoicePrompt);
+      formData.append("masterVoicePrompt", voiceProfile || masterVoicePrompt);
       formData.append("presenterDescription", presenterDescription);
       formData.append("language", language);
+      formData.append("elevenLabsVoice", elevenLabsVoice);
       formData.append("aspectRatio", "9:16");
 
       await Promise.all(
@@ -130,6 +200,11 @@ export function GenerationProgress({ generationParams, onReset }) {
           }
         })
       );
+
+      if (backgroundImage?.file) {
+        const compressed = await compressImage(backgroundImage.file);
+        formData.append("backgroundImage", compressed);
+      }
 
       const res = await fetch("/api/veo-long-ad/generate-pipeline", {
         method: "POST",
@@ -198,10 +273,43 @@ export function GenerationProgress({ generationParams, onReset }) {
         break;
 
       case "script_approved":
+      case "beat_plan_approved":
         clearInterval(countdownRef.current);
         setStatus(STATUS.GENERATING_BASE);
-        setMessage(event.message || "Starting video generation...");
+        setMessage(event.message || "Starting generation…");
         break;
+
+      case "voice_generating":
+        setStatus(STATUS.VOICE_GENERATING);
+        setMessage(event.message || `Generating voice for ${event.avatarBeatCount ?? ""} avatar beat(s)…`);
+        break;
+
+      case "voice_ready":
+        setStatus(STATUS.GENERATING_BASE);
+        setMessage(event.message || "Voice ready. Starting video generation…");
+        break;
+
+      case "voice_warning":
+        toast.warning(event.message || "Voice generation issue", { duration: 8000 });
+        setMessage(event.message || "");
+        break;
+
+      case "beat_generating":
+        setCurrentChunkIdx(event.beatIndex ?? event.chunkIndex ?? 0);
+        setMessage(event.message || "");
+        setStatus(STATUS.GENERATING_BASE);
+        break;
+
+      case "beat_done": {
+        const idx = event.beatIndex ?? event.chunkIndex ?? 0;
+        setCurrentChunkIdx(idx);
+        setCompletedChunks((prev) => [...new Set([...prev, idx])]);
+        if (event.clipUrl) {
+          setChunkClipUrls((prev) => ({ ...prev, [idx]: event.clipUrl }));
+        }
+        setMessage(event.message || "");
+        break;
+      }
 
       case "progress":
         setCurrentChunkIdx(event.chunkIndex ?? 0);
@@ -210,27 +318,34 @@ export function GenerationProgress({ generationParams, onReset }) {
         else if (event.status === "extending") setStatus(STATUS.EXTENDING);
         break;
 
-      case "chunk_done":
-        setCurrentChunkIdx(event.chunkIndex ?? 0);
-        setCompletedChunks((prev) => [...new Set([...prev, event.chunkIndex])]);
+      case "chunk_done": {
+        const idx = event.chunkIndex ?? 0;
+        setCurrentChunkIdx(idx);
+        setCompletedChunks((prev) => [...new Set([...prev, idx])]);
         if (event.clipUrl) {
-          setChunkClipUrls((prev) => ({ ...prev, [event.chunkIndex]: event.clipUrl }));
+          setChunkClipUrls((prev) => ({ ...prev, [idx]: event.clipUrl }));
         }
         setMessage(event.message || "");
         break;
+      }
 
       case "uploading":
         setStatus(STATUS.UPLOADING);
-        setMessage(event.message || "Uploading…");
+        setMessage(event.message || "Saving…");
         break;
 
       case "video_ready":
-        setStatus(STATUS.DONE);
-        setVideoUrl(event.videoUrl);
         setTotalDuration(event.totalDuration || 0);
-        setMessage(event.message || "Your video is ready!");
-        setCompletedChunks(chunks.map((_, i) => i));
-        toast.success(`🎉 Long-form ad ready! ${event.totalDuration}s`);
+        setMessage(event.message || "");
+        setCompletedChunks(beatPlan.map((_, i) => i));
+        if (!event.clipUrls || event.clipUrls.length === 0) {
+          setStatus(STATUS.ERROR);
+          setError("No clips were generated. Check server logs for Veo errors.");
+          toast.error("Generation failed — no clips produced. Check the server console.");
+        } else {
+          toast.success(`${event.clipUrls.length} clips ready — combining with voiceover…`);
+          triggerCombine(event.clipUrls, event.audioUrls || null, event.fullAudioUrl || null, event.durations || null);
+        }
         break;
 
       case "error":
@@ -295,14 +410,10 @@ export function GenerationProgress({ generationParams, onReset }) {
     document.body.removeChild(a);
   };
 
-  // ── Chunk status helpers ──────────────────────────────────────────────────
-  const getChunkStatus = (idx) => {
+  // ── Beat status helpers ───────────────────────────────────────────────────
+  const getBeatStatus = (idx) => {
     if (completedChunks.includes(idx)) return "done";
-    if (idx === currentChunkIdx) {
-      if (status === STATUS.GENERATING_BASE && idx === 0) return "active_generate";
-      if (status === STATUS.EXTENDING) return "active_extend";
-      return "active";
-    }
+    if (idx === currentChunkIdx) return "active";
     return "waiting";
   };
 
@@ -312,14 +423,18 @@ export function GenerationProgress({ generationParams, onReset }) {
 
   // ── Status label ─────────────────────────────────────────────────────────
   const statusLabel = () => {
-    if (status === STATUS.AWAITING_APPROVAL) return `Review script — auto-approving in ${approvalCountdown}s`;
-    if (status === STATUS.GENERATING_BASE) return "Generating base clip…";
-    if (status === STATUS.EXTENDING) return `Extending clip ${currentChunkIdx + 1}/${totalChunks}…`;
-    if (status === STATUS.UPLOADING) return "Saving to cloud…";
+    if (status === STATUS.AWAITING_APPROVAL) return `Review beat plan — auto-approving in ${approvalCountdown}s`;
+    if (status === STATUS.VOICE_GENERATING) return "Generating ElevenLabs voice…";
+    if (status === STATUS.GENERATING_BASE) return `Generating beat ${currentChunkIdx + 1}/${totalChunks}…`;
+    if (status === STATUS.EXTENDING) return `Generating beat ${currentChunkIdx + 1}/${totalChunks}…`;
+    if (status === STATUS.COMBINING) return "Assembling clips…";
+    if (status === STATUS.UPLOADING) return "Saving to Asset Library…";
     if (status === STATUS.DONE) return "Done!";
     if (status === STATUS.ERROR) return "Error";
     return "Starting…";
   };
+
+  const isGenerating = [STATUS.VOICE_GENERATING, STATUS.GENERATING_BASE, STATUS.EXTENDING, STATUS.UPLOADING, STATUS.COMBINING].includes(status);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -327,17 +442,21 @@ export function GenerationProgress({ generationParams, onReset }) {
       <div className="text-center space-y-1">
         <h2 className="text-2xl font-bold font-heading tracking-tight">
           {status === STATUS.DONE
-            ? "🎬 Your Long-Form Ad is Ready!"
+            ? "🎬 Your Hybrid Reel is Ready!"
             : status === STATUS.AWAITING_APPROVAL
-            ? "Review Your Script"
-            : "Generating Long-Form Ad"}
+            ? "Review Your Beat Plan"
+            : status === STATUS.COMBINING
+            ? "Assembling Clips…"
+            : "Generating Hybrid Reel"}
         </h2>
         <p className="text-sm text-muted-foreground">
           {status === STATUS.DONE
-            ? `${totalDuration}s property video — saved to your Asset Library`
+            ? `${totalDuration}s reel — saved to your Asset Library`
             : status === STATUS.AWAITING_APPROVAL
-            ? "Edit dialogue or camera notes below. Auto-approves in a few seconds."
-            : `${totalChunks} clips chaining with Veo 3.1 · ~${Math.round(totalChunks * 2.5)} min total`}
+            ? "Edit narration or Veo prompts below. Auto-approves in a few seconds."
+            : status === STATUS.COMBINING
+            ? combineProgress || "Combining clips with FFmpeg…"
+            : `${totalChunks} beats · Ken Burns + ElevenLabs TTS · avatar acts = black screen`}
         </p>
       </div>
 
@@ -416,65 +535,65 @@ export function GenerationProgress({ generationParams, onReset }) {
           </div>
           <div className="h-2.5 rounded-full bg-muted/40 overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-primary to-violet-500 transition-all duration-700 ease-out"
-              style={{ width: `${Math.max(progressPercent, status === STATUS.IDLE ? 0 : 4)}%` }}
+              className="h-full rounded-full bg-linear-to-r from-primary to-violet-500 transition-all duration-700 ease-out"
+              style={{ width: `${Math.max(progressPercent, isGenerating ? 4 : 0)}%` }}
             />
           </div>
           <p className="text-[11px] text-muted-foreground">{message}</p>
         </div>
       )}
 
-      {/* ── Chunk rail ───────────────────────────────────────────────────── */}
+      {/* ── Beat rail ────────────────────────────────────────────────────── */}
       {totalChunks > 0 && status !== STATUS.AWAITING_APPROVAL && (
         <div className="relative">
           <div className="flex items-center gap-0 overflow-x-auto pb-2">
-            {chunks.map((chunk, idx) => {
-              const chunkStatus = getChunkStatus(idx);
+            {beatPlan.map((beat, idx) => {
+              const beatStatus = getBeatStatus(idx);
+              const isAvatar = beat.visual_type === "avatar" || beat.visualType === "avatar";
+              const beatType = beat.type || beat.beatType || "PROPERTY_VISUAL";
+              const colorClass = BEAT_COLORS[beatType] || BEAT_COLORS.PROPERTY_VISUAL;
+
               return (
                 <div key={idx} className="flex items-center shrink-0">
-                  {/* Connector line */}
                   {idx > 0 && (
-                    <div className={`h-0.5 w-6 sm:w-8 transition-colors duration-500 ${
+                    <div className={`h-0.5 w-5 sm:w-7 transition-colors duration-500 ${
                       completedChunks.includes(idx - 1) ? "bg-primary" : "bg-border/40"
                     }`} />
                   )}
-                  {/* Chunk node */}
                   <div className="flex flex-col items-center gap-1">
                     <div className={`relative w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all duration-500 ${
-                      chunkStatus === "done"
+                      beatStatus === "done"
                         ? "border-primary bg-primary shadow-md shadow-primary/30"
-                        : chunkStatus.startsWith("active")
+                        : beatStatus === "active"
                         ? "border-primary bg-primary/10 animate-pulse"
                         : "border-border/40 bg-muted/20"
                     }`}>
-                      {chunkStatus === "done" ? (
+                      {beatStatus === "done" ? (
                         <CheckCircle2 className="w-4 h-4 text-white" />
-                      ) : chunkStatus.startsWith("active") ? (
+                      ) : beatStatus === "active" ? (
                         <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
                       ) : (
-                        <span className="text-[10px] font-semibold text-muted-foreground">{idx + 1}</span>
+                        isAvatar
+                          ? <User className={`w-3.5 h-3.5 ${colorClass.split(" ")[1]}`} />
+                          : <Video className={`w-3.5 h-3.5 ${colorClass.split(" ")[1]}`} />
                       )}
                     </div>
-                    {chunkStatus === "done" && chunkClipUrls[idx] ? (
+                    {beatStatus === "done" && chunkClipUrls[idx] ? (
                       <a
                         href={chunkClipUrls[idx]}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title={`Download clip ${idx + 1}`}
+                        title={`Download beat ${idx + 1}`}
                         className="text-[9px] font-medium text-primary flex items-center gap-0.5 hover:underline"
                       >
                         <Download className="w-2.5 h-2.5" />
-                        {idx + 1}
+                        clip
                       </a>
                     ) : (
                       <span className={`text-[9px] font-medium ${
-                        chunkStatus === "done" ? "text-primary" :
-                        chunkStatus.startsWith("active") ? "text-primary" : "text-muted-foreground"
+                        beatStatus === "done" || beatStatus === "active" ? "text-primary" : "text-muted-foreground"
                       }`}>
-                        {chunkStatus === "done" ? "✓" :
-                         chunkStatus.startsWith("active") ? (
-                           idx === 0 ? "Gen" : "Ext"
-                         ) : `${chunk.estimatedSeconds || 8}s`}
+                        {beatStatus === "done" ? "✓" : beatStatus === "active" ? "…" : `${beat.duration_seconds || beat.estimatedSeconds || 4}s`}
                       </span>
                     )}
                   </div>
@@ -486,21 +605,29 @@ export function GenerationProgress({ generationParams, onReset }) {
       )}
 
       {/* ── Status message (non-error, non-done, non-approval) ───────────── */}
-      {status !== STATUS.DONE && status !== STATUS.ERROR && status !== STATUS.AWAITING_APPROVAL && (
+      {isGenerating && status !== STATUS.UPLOADING && (
         <div className="rounded-2xl border border-border/50 bg-muted/20 p-4 flex gap-3">
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-            <Clapperboard className="w-4 h-4 text-primary" />
+            {status === STATUS.VOICE_GENERATING
+              ? <Mic className="w-4 h-4 text-primary" />
+              : status === STATUS.COMBINING
+              ? <Layers className="w-4 h-4 text-primary" />
+              : <Clapperboard className="w-4 h-4 text-primary" />
+            }
           </div>
           <div>
             <p className="text-sm font-medium">
-              {status === STATUS.GENERATING_BASE && "Generating your base clip with Veo 3.1…"}
-              {status === STATUS.EXTENDING && `Extending video with chunk ${currentChunkIdx + 1}…`}
-              {status === STATUS.UPLOADING && "Saving to your Asset Library…"}
-              {status === STATUS.IDLE && "Starting pipeline…"}
+              {status === STATUS.VOICE_GENERATING && "Generating ElevenLabs voiceover for all narration beats…"}
+              {status === STATUS.GENERATING_BASE && `Beat ${currentChunkIdx + 1}/${totalChunks} generating in parallel…`}
+              {status === STATUS.EXTENDING && `Beat ${currentChunkIdx + 1}/${totalChunks} generating…`}
+              {status === STATUS.COMBINING && (combineProgress || "Combining all clips via FFmpeg…")}
+              {status === STATUS.IDLE && "Starting hybrid pipeline…"}
             </p>
             <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5">
               <Clock className="w-3 h-3" />
-              Each clip takes 2–3 minutes. Please keep this tab open.
+              {status === STATUS.COMBINING
+                ? "Running in your browser — keep this tab open."
+                : "All beats generate in parallel. Keep this tab open."}
             </p>
           </div>
         </div>
@@ -533,7 +660,7 @@ export function GenerationProgress({ generationParams, onReset }) {
       {status === STATUS.DONE && videoUrl && (
         <div className="space-y-4">
           {/* Video player */}
-          <div className="relative rounded-3xl overflow-hidden border border-border/50 bg-black aspect-[9/16] max-w-xs mx-auto shadow-2xl">
+          <div className="relative rounded-3xl overflow-hidden border border-border/50 bg-black aspect-9/16 max-w-xs mx-auto shadow-2xl">
             <video
               ref={videoRef}
               src={videoUrl}
@@ -607,7 +734,7 @@ export function GenerationProgress({ generationParams, onReset }) {
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground">Model</p>
-              <p className="text-sm font-bold text-primary">Veo 3.1</p>
+              <p className="text-sm font-bold text-primary">Ken Burns</p>
             </div>
           </div>
 

@@ -11,6 +11,7 @@ import {
   Loader2,
   Info,
   Plus,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -27,11 +28,14 @@ import { Input } from "@/components/ui/input";
 export function StepUpload({
   locationImages,
   setLocationImages,
+  backgroundImage,
+  setBackgroundImage,
   avatarHook,
   onNext,
   isValid,
 }) {
   const [draggingLocation, setDraggingLocation] = useState(false);
+  const [draggingBackground, setDraggingBackground] = useState(false);
 
   // ── Collection upload state (Upload Presenter tab) ─────────────────────────
   const [uploadItems, setUploadItems] = useState([]);
@@ -574,6 +578,87 @@ export function StepUpload({
                   : `${selectedAvatars.length} custom presenter selected`}
               </span>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Background Image ───────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-neutral-900 flex items-center justify-center">
+            <Layers className="w-4 h-4 text-[#c7f038]" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold">Avatar Background Scene</h3>
+            <p className="text-[11px] text-muted-foreground">
+              Used behind the presenter in avatar beats — lobby, exterior, living room, etc.
+            </p>
+          </div>
+          {backgroundImage && (
+            <button
+              onClick={() => setBackgroundImage(null)}
+              className="ml-auto w-6 h-6 rounded-full bg-neutral-200 flex items-center justify-center hover:bg-neutral-300 transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDraggingBackground(true); }}
+          onDragLeave={() => setDraggingBackground(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDraggingBackground(false);
+            const file = e.dataTransfer.files?.[0];
+            if (file && file.type.startsWith("image/")) {
+              setBackgroundImage({ file, url: URL.createObjectURL(file), name: file.name });
+            }
+          }}
+          className={`relative border-2 border-dashed rounded-3xl transition-all overflow-hidden ${
+            draggingBackground
+              ? "border-primary bg-primary/5 scale-[1.01]"
+              : backgroundImage
+              ? "border-border/40 bg-muted/10"
+              : "border-border hover:border-[#c7f038] bg-muted/20 hover:bg-muted/30"
+          }`}
+        >
+          {backgroundImage ? (
+            <div className="relative h-40">
+              <img
+                src={backgroundImage.url}
+                alt={backgroundImage.name}
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-linear-to-t from-black/40 via-transparent to-transparent" />
+              <div className="absolute bottom-2 left-3 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#c7f038]" />
+                <span className="text-[11px] text-white font-medium truncate max-w-[200px]">
+                  {backgroundImage.name}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <label className="flex items-center gap-4 py-5 px-6 cursor-pointer">
+              <div className="w-10 h-10 rounded-2xl bg-neutral-900 flex items-center justify-center shrink-0">
+                <Upload className="w-4 h-4 text-[#c7f03b]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">Upload background scene</p>
+                <p className="text-xs text-neutral-500">
+                  One photo — property interior, lobby, exterior, etc. PNG, JPG up to 10MB
+                </p>
+              </div>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setBackgroundImage({ file, url: URL.createObjectURL(file), name: file.name });
+                }}
+              />
+            </label>
           )}
         </div>
       </div>
