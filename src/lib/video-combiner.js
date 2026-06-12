@@ -90,7 +90,7 @@ function getWavDurationSeconds(data) {
  * @returns {Promise<{ blobUrl: string, blob: Blob }>}
  */
 export async function combineVideos(videoUrls, options = {}) {
-  const { onProgress, onLog, durations, audioUrls } = options;
+  const { onProgress, onLog, durations, audioUrls, fullAudioUrl } = options;
   const logs = [];
 
   const internalLog = (msg) => {
@@ -103,8 +103,8 @@ export async function combineVideos(videoUrls, options = {}) {
     throw new Error("No video URLs provided");
   }
 
-  // Single video — mix audio if present, then return
-  if (videoUrls.length === 1 && !audioUrls?.[0]) {
+  // Single video with no audio at all — return directly without loading FFmpeg
+  if (videoUrls.length === 1 && !audioUrls?.[0] && !fullAudioUrl) {
     onProgress?.("Fetching video...");
     internalLog(`Single video detected. Fetching ${videoUrls[0]}`);
     const response = await fetch(videoUrls[0]);
@@ -132,13 +132,14 @@ export async function combineVideos(videoUrls, options = {}) {
         const data = await fetchFile(videoUrls[i]);
 
         if (isImageUrl(videoUrls[i])) {
-          // Property B-roll: uploaded photo → static looped video
+          // Fallback static image (Hailuo failed server-side) → plain scale+crop, no animation
           const ext = videoUrls[i].split("?")[0].split(".").pop().toLowerCase();
           const imgFile = `img${i}.${ext}`;
           await ffmpeg.writeFile(imgFile, data);
 
-          const clipDuration = durations?.[i] || 5;
-          internalLog(`Converting image ${i + 1} to ${clipDuration}s video...`);
+          const clipDuration = fullAudioUrl ? (durations?.[i] || 5) : (durations?.[i] || 5) + 0.6;
+          internalLog(`Converting static image ${i + 1} to ${clipDuration}s clip...`);
+
           await ffmpeg.exec([
             "-loop", "1",
             "-framerate", "25",
@@ -151,7 +152,7 @@ export async function combineVideos(videoUrls, options = {}) {
             "-an",
             `input${i}.mp4`,
           ]);
-          internalLog(`Image ${i + 1} converted to video.`);
+          internalLog(`Image ${i + 1} converted to static video.`);
         } else {
           await ffmpeg.writeFile(`input${i}.mp4`, data);
           internalLog(`Wrote input${i}.mp4 (${data.length || data.byteLength} bytes)`);
@@ -167,7 +168,8 @@ export async function combineVideos(videoUrls, options = {}) {
     // speech length — this prevents mid-word cuts when outpoint < audio length.
     const clipFiles = videoUrls.map((_, i) => `input${i}.mp4`);
     const mergedIndices = new Set();
-    const hasAnyAudio = audioUrls?.some(Boolean);
+    // Skip per-clip audio mixing when a single full-track audio is provided
+    const hasAnyAudio = !fullAudioUrl && audioUrls?.some(Boolean);
     if (hasAnyAudio) {
       onProgress?.("Mixing voiceover into clips...");
       for (let i = 0; i < videoUrls.length; i++) {
@@ -176,25 +178,35 @@ export async function combineVideos(videoUrls, options = {}) {
         try {
           internalLog(`Downloading audio for clip ${i + 1}: ${audioUrl}`);
           const audioData = await fetchFile(audioUrl);
-          await ffmpeg.writeFile(`audio${i}.wav`, audioData);
+          // Detect format from URL so FFmpeg demuxer gets the right hint
+          const audioExt = audioUrl.split("?")[0].endsWith(".mp3") ? "mp3" : "wav";
+          await ffmpeg.writeFile(`audio${i}.${audioExt}`, audioData);
 
-          // Calculate exact audio duration from WAV header so we can trim precisely
-          const audioDuration = getWavDurationSeconds(audioData);
+          // WAV duration parsing; returns null for MP3 → falls back to -shortest (safe)
+          const audioDuration = audioExt === "wav" ? getWavDurationSeconds(audioData) : null;
           internalLog(`Clip ${i + 1} audio duration: ${audioDuration ?? "unknown"}s`);
 
+          // Silence tail + fade-in/out so beats don't hard-cut or click into each other
+          const SILENCE_PAD = 0.38;
+          const FADE_DUR = 0.06; // 60ms fade at each end to kill click/pop artifacts
           const trimArgs = audioDuration
-            ? ["-t", audioDuration.toFixed(3)]
+            ? ["-t", (audioDuration + SILENCE_PAD).toFixed(3)]
             : ["-shortest"];
+          const fadeOutStart = audioDuration ? Math.max(0, audioDuration - FADE_DUR).toFixed(3) : null;
+          const audioFilter = audioDuration
+            ? ["-af", `afade=t=in:st=0:d=${FADE_DUR},afade=t=out:st=${fadeOutStart}:d=${FADE_DUR},apad=pad_dur=${SILENCE_PAD}`]
+            : [];
 
           internalLog(`Mixing audio into clip ${i + 1}...`);
           await ffmpeg.exec([
             "-i", `input${i}.mp4`,
-            "-i", `audio${i}.wav`,
+            "-i", `audio${i}.${audioExt}`,
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "128k",
             "-map", "0:v:0",
             "-map", "1:a:0",
+            ...audioFilter,
             ...trimArgs,
             "-avoid_negative_ts", "make_zero",
             `merged${i}.mp4`,
@@ -208,8 +220,8 @@ export async function combineVideos(videoUrls, options = {}) {
       }
     }
 
-    // If only one clip (possibly after audio mix), return it directly
-    if (videoUrls.length === 1) {
+    // If only one clip with no full-track audio, return it directly (skip concat overhead)
+    if (videoUrls.length === 1 && !fullAudioUrl) {
       const outputData = await ffmpeg.readFile(clipFiles[0]);
       const blob = new Blob([outputData.buffer], { type: "video/mp4" });
       return { blobUrl: URL.createObjectURL(blob), blob, logs };
@@ -260,10 +272,32 @@ export async function combineVideos(videoUrls, options = {}) {
       internalLog("Re-encoding finished.");
     }
 
-    onProgress?.("Finalizing combined video...");
-    internalLog("Reading output.mp4 from virtual FS...");
+    // Apply single full-track audio to the concatenated video (no per-clip mixing)
+    if (fullAudioUrl) {
+      onProgress?.("Mixing voiceover into final video...");
+      internalLog(`Downloading full narration audio: ${fullAudioUrl}`);
+      const fullAudioData = await fetchFile(fullAudioUrl);
+      const audioExt = fullAudioUrl.split("?")[0].endsWith(".mp3") ? "mp3" : "wav";
+      await ffmpeg.writeFile(`full_audio.${audioExt}`, fullAudioData);
+      await ffmpeg.exec([
+        "-i", "output.mp4",
+        "-i", `full_audio.${audioExt}`,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        "output_audio.mp4",
+      ]);
+      internalLog("Full audio mixed into video.");
+    }
 
-    const outputData = await ffmpeg.readFile("output.mp4");
+    onProgress?.("Finalizing combined video...");
+    const finalFile = fullAudioUrl ? "output_audio.mp4" : "output.mp4";
+    internalLog(`Reading ${finalFile} from virtual FS...`);
+
+    const outputData = await ffmpeg.readFile(finalFile);
     const blob = new Blob([outputData.buffer], { type: "video/mp4" });
     const blobUrl = URL.createObjectURL(blob);
 

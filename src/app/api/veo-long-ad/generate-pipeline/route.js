@@ -1,7 +1,6 @@
 export const maxDuration = 300;
 
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import Asset from "@/models/Asset";
@@ -10,6 +9,11 @@ import { uploadToR2, buildUserKey } from "@/lib/r2-upload";
 import { consumeCreditsForAction, refundCreditsForAction } from "@/lib/credit-system";
 import { pendingJobs } from "@/lib/veo-pending-jobs";
 import sharp from "sharp";
+import { fal } from "@fal-ai/client";
+
+if (process.env.FAL_KEY) {
+  fal.config({ credentials: process.env.FAL_KEY });
+}
 
 /**
  * POST /api/veo-long-ad/generate-pipeline
@@ -23,7 +27,7 @@ import sharp from "sharp";
  * Generation strategy:
  *   - All beats start concurrently via Veo (concurrency-limited to 2)
  *   - All beats with narration get Sarvam TTS audio generated in parallel
- *   - video_ready sends clipUrls[] + audioUrls[] in beat order
+ *   - video_ready sends clipUrls[] + fullAudioUrl (single continuous WAV)
  *   - Client FFmpeg mixes audio into each clip that has one, then concats
  *
  * Requires:
@@ -54,61 +58,39 @@ import sharp from "sharp";
  *   ping
  */
 
-const VEO_MAX_CONCURRENCY = 3;
-const VEO_POLL_INTERVAL_MS = 10000;
-const VEO_TIMEOUT_MS = 12 * 60 * 1000;
 
-// Sarvam language code + speaker mapping for Indian languages
-// Model: bulbul:v3 — kavitha (female), rahul (male)
-// Speaker is overridden per-generation by detectAvatarGender (kavitha=female, rahul=male)
-const SARVAM_LANG_MAP = {
-  english:   { code: "en-IN", speaker: "kavitha" },
-  hindi:     { code: "hi-IN", speaker: "kavitha" },
-  hinglish:  { code: "hi-IN", speaker: "kavitha" },
-  marathi:   { code: "mr-IN", speaker: "kavitha" },
-  tamil:     { code: "ta-IN", speaker: "kavitha" },
-  telugu:    { code: "te-IN", speaker: "kavitha" },
-  kannada:   { code: "kn-IN", speaker: "kavitha" },
-  malayalam: { code: "ml-IN", speaker: "kavitha" },
-  bengali:   { code: "bn-IN", speaker: "kavitha" },
-  gujarati:  { code: "gu-IN", speaker: "kavitha" },
-  punjabi:   { code: "pa-IN", speaker: "kavitha" },
-  urdu:      { code: "ur-IN", speaker: "kavitha" },
-  odia:      { code: "od-IN", speaker: "kavitha" },
+// ── ElevenLabs voice settings ─────────────────────────────────────────────────
+// Tune these to change how the voice sounds:
+//   stability        0.0–1.0  lower = more dynamic/emotional, higher = more consistent
+//   similarity_boost 0.0–1.0  higher = more faithful to the original voice clone
+//   style            0.0–1.0  higher = more expressive delivery (v2 models only)
+//   speed            0.7–1.2  speaking rate — 1.0 is natural, 1.1 is slightly punchy for ads
+const ELEVENLABS_VOICE_SETTINGS = {
+  stability:        0.40,
+  similarity_boost: 0.65,
+  style:            0.00,
+  use_speaker_boost: true,
+  speed:            0.90,
 };
+const ELEVENLABS_MODEL = "eleven_multilingual_v2"; // supports Hindi, Hinglish, and English
 
-async function detectAvatarGender(ai, imageBuf) {
-  try {
-    const result = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [{
-        parts: [
-          { text: "Is the person in this image male or female? Reply with exactly one word: male or female." },
-          { inlineData: { mimeType: "image/jpeg", data: imageBuf.toString("base64") } },
-        ],
-      }],
-    });
-    const answer = (result.text ?? "").trim().toLowerCase();
-    // "female" contains "male" as substring — check female first
-    if (answer.includes("female")) return "female";
-    if (answer.includes("male")) return "male";
-    return "female";
-  } catch (err) {
-    console.warn("[VeoLongAd] Gender detection failed, defaulting to female:", err.message);
-    return "female";
-  }
+async function generateHailuoBroll(imageUrl, prompt) {
+  if (!process.env.FAL_KEY) throw new Error("FAL_KEY not configured");
+  const result = await fal.subscribe("fal-ai/minimax/hailuo-02/standard/image-to-video", {
+    input: {
+      image_url: imageUrl,
+      prompt: prompt || "Smooth cinematic pan across this real estate property. Natural lighting, high quality.",
+    },
+    logs: false,
+  });
+  const videoUrl = result?.data?.video?.url;
+  if (!videoUrl) throw new Error("Hailuo returned no video URL");
+  return videoUrl;
 }
 
 export async function POST(request) {
   let userId = null;
   let debit = null;
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: "GEMINI_API_KEY is not configured" }, { status: 500 });
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const session = await getServerSession(authOptions);
@@ -124,7 +106,6 @@ export async function POST(request) {
     userId = user._id.toString();
 
     const formData = await request.formData();
-    const aspectRatio = (formData.get("aspectRatio") || "9:16").toString();
     const language = (formData.get("language") || "english").toString();
 
     // ── Parse beat plan ─────────────────────────────────────────────────────
@@ -207,53 +188,36 @@ export async function POST(request) {
       try { locationBufs.push(Buffer.from(await f.arrayBuffer())); } catch (_) {}
     }
 
-    const [stitchedAvatarBuf, stitchedLocationBuf] = await Promise.all([
-      stitchImagesHorizontal(avatarBufs),
-      stitchImagesHorizontal(locationBufs),
-    ]);
 
-    // Property beats use only location as STYLE reference — no avatar in property shots
-    const propertyRefImages = stitchedLocationBuf
-      ? [{ image: { imageBytes: stitchedLocationBuf.toString("base64"), mimeType: "image/jpeg" }, referenceType: "STYLE" }]
-      : [];
-
-    // Avatar beats for Veo fallback use avatar as SUBJECT + location as STYLE
-    const avatarRefImages = [
-      ...(stitchedAvatarBuf
-        ? [{ image: { imageBytes: stitchedAvatarBuf.toString("base64"), mimeType: "image/jpeg" }, referenceType: "SUBJECT" }]
-        : []),
-      ...propertyRefImages,
-    ];
-
-    // Upload each location image individually to R2 so property beats can use the
-    // actual uploaded photos as B-roll instead of generating new Veo clips.
+    // Crop location images to 9:16 (1080×1920) — Hailuo output aspect ratio follows input image.
+    // centre-crop preserves the most important subject area for real estate shots.
     const locationImageR2Urls = [];
     await Promise.all(
       locationBufs.map(async (buf, i) => {
         try {
+          const cropped = await sharp(buf)
+            .resize(1080, 1920, { fit: "cover", position: "centre" })
+            .jpeg({ quality: 88 })
+            .toBuffer();
           const key = buildUserKey(userId, "images", "jpg", `location-${i}`);
-          const url = await uploadToR2(buf, key, "image/jpeg");
+          const url = await uploadToR2(cropped, key, "image/jpeg");
           if (url.startsWith("http")) locationImageR2Urls[i] = url;
         } catch (e) {
           console.warn(`[VeoLongAd] Failed to upload location image ${i}:`, e.message);
         }
       })
     );
-    console.log(`[VeoLongAd] Uploaded ${locationImageR2Urls.filter(Boolean).length} location images to R2`);
+    console.log(`[VeoLongAd] Uploaded ${locationImageR2Urls.filter(Boolean).length} location images to R2 (9:16 cropped)`);
 
-    const sarvamKey = process.env.SARVAM_API_KEY || null;
-    const ttsEnabled = !!(sarvamKey);
+    const ttsEnabled = !!(process.env.FAL_KEY);
 
     if (!ttsEnabled) {
-      console.log("[VeoLongAd] Sarvam TTS disabled — SARVAM_API_KEY not set. Clips will have no voiceover.");
+      console.log("[VeoLongAd] ElevenLabs TTS disabled — FAL_KEY not set. Clips will have no voiceover.");
     }
 
-    const avatarGender = stitchedAvatarBuf
-      ? await detectAvatarGender(ai, stitchedAvatarBuf)
-      : "female";
-    const sarvamLangBase = SARVAM_LANG_MAP[language] || SARVAM_LANG_MAP.english;
-    const sarvamLang = { ...sarvamLangBase, speaker: avatarGender === "male" ? "rahul" : "kavitha" };
-    console.log(`[VeoLongAd] Avatar gender detected: ${avatarGender} → speaker: ${sarvamLang.speaker}`);
+    // Use the voice ID chosen in the UI; fall back to Rachel if not provided
+    const elevenLabsVoiceId = (formData.get("elevenLabsVoice") || "21m00Tcm4TlvDq8ikWAM").toString();
+    console.log(`[VeoLongAd] ElevenLabs voice: ${elevenLabsVoiceId}, model: ${ELEVENLABS_MODEL}`);
 
     // ── SSE stream ──────────────────────────────────────────────────────────
     const encoder = new TextEncoder();
@@ -323,47 +287,60 @@ export async function POST(request) {
 
           const totalBeats = workBeats.length;
 
-          // ── Stage 2: Sarvam TTS for all beats with narration ─────────────
-          const beatAudioUrls = {};
+          // ── Stage 2: Full-script TTS — one ElevenLabs call via fal ─────────
+          // All beat narrations are joined into a single script so ElevenLabs
+          // delivers a consistent, continuous performance with natural pacing.
+          // The single MP3 is mixed over the concatenated video by the client.
           const narrationBeats = workBeats.filter((b) => b.narration);
+          let fullAudioUrl = null;
+
+          if (!ttsEnabled) {
+            send({ type: "voice_warning", message: "⚠️ FAL_KEY not configured — video will have no voiceover." });
+          } else if (narrationBeats.length === 0) {
+            console.warn("[VeoLongAd] No beats have narration — skipping TTS.");
+          }
 
           if (ttsEnabled && narrationBeats.length > 0) {
             send({
               type: "voice_generating",
               narrationBeatCount: narrationBeats.length,
-              message: `Generating Sarvam voice for ${narrationBeats.length} beat(s) (${sarvamLang.code})…`,
+              message: `Generating full ${narrationBeats.length}-beat voiceover via ElevenLabs…`,
             });
 
-            await Promise.all(
-              narrationBeats.map(async (beat) => {
-                try {
-                  const audioBuffer = await generateSarvamTTS(
-                    beat.narration,
-                    sarvamLang.code,
-                    sarvamLang.speaker
-                  );
-                  const audioKey = buildUserKey(userId, "audio", "wav", `beat-${beat.index}`);
-                  const audioUrl = await uploadToR2(audioBuffer, audioKey, "audio/wav");
-                  if (audioUrl.startsWith("http")) {
-                    beatAudioUrls[beat.index] = audioUrl;
-                  }
-                } catch (ttsErr) {
-                  console.error(`[VeoLongAd] Sarvam TTS failed for beat ${beat.index}:`, ttsErr.message);
-                }
-              })
-            );
+            // Join all narration lines with double-newlines so ElevenLabs inserts
+            // natural inter-beat pauses without extra configuration.
+            const fullScript = narrationBeats.map((b) => b.narration.trim()).join("\n\n");
+            console.log(`[VeoLongAd] Full TTS script (${fullScript.length} chars): "${fullScript.slice(0, 120)}…"`);
 
-            send({ type: "voice_ready", message: "Voice ready. Starting video generation…" });
+            try {
+              const audioBuf = await generateElevenLabsTTS(fullScript, elevenLabsVoiceId);
+              const key = buildUserKey(userId, "audio", "mp3", "full-narration");
+              fullAudioUrl = await uploadToR2(audioBuf, key, "audio/mpeg");
+              console.log(`[VeoLongAd] Full narration uploaded: ${audioBuf.length} bytes → ${fullAudioUrl}`);
+              send({ type: "voice_ready", message: "Voice ready. Starting video generation…" });
+            } catch (ttsErr) {
+              console.error("[VeoLongAd] TTS failed:", ttsErr.message);
+              send({ type: "voice_warning", message: `⚠️ TTS failed: ${ttsErr.message} — video will have no audio.` });
+              send({ type: "voice_ready", message: "⚠️ Continuing without audio…" });
+            }
           }
 
           // ── Stage 3: All beats → generate in parallel ────────────────────
-          // Property beats use the uploaded location images directly (no Veo).
-          // Avatar beats go through Veo with the presenter as SUBJECT reference.
-          const veoSemaphore = createSemaphore(VEO_MAX_CONCURRENCY);
+          // Property beats: Hailuo image-to-video B-roll from uploaded reference photos.
+          // Avatar beats: black screen placeholder (Veo temporarily disabled).
           const clipResults = new Array(totalBeats).fill(null);
-          let propertyImageIdx = 0;
 
-          const beatPromises = workBeats.map(async (beat) => {
+          // Pre-assign image indices synchronously before any async work to avoid races
+          const beatImageIndices = (() => {
+            let idx = 0;
+            return workBeats.map((b) =>
+              b.visual_type === "property" && locationImageR2Urls.length > 0
+                ? idx++ % locationImageR2Urls.length
+                : null
+            );
+          })();
+
+          const beatPromises = workBeats.map(async (beat, mapIdx) => {
             send({
               type: "beat_generating",
               beatIndex: beat.index,
@@ -376,35 +353,31 @@ export async function POST(request) {
             let clipUrl = null;
 
             if (beat.visual_type === "property" && locationImageR2Urls.length > 0) {
-              // Use uploaded property photo directly — skip Veo for B-roll beats
-              clipUrl = locationImageR2Urls[propertyImageIdx++ % locationImageR2Urls.length];
-            } else {
+              const imgUrl = locationImageR2Urls[beatImageIndices[mapIdx]];
               try {
-                await veoSemaphore.acquire();
-                try {
-                  clipUrl = await generateVeoClip({
-                    ai,
-                    apiKey,
-                    prompt: buildPresenterVeoPrompt(beat),
-                    referenceImages: avatarRefImages,
-                    aspectRatio,
-                    userId,
-                    beatIndex: beat.index,
-                    send,
-                  });
-                } finally {
-                  veoSemaphore.release();
-                }
+                console.log(`[VeoLongAd] Hailuo B-roll beat ${beat.index}: ${imgUrl}`);
+                const falVideoUrl = await generateHailuoBroll(imgUrl, beat.veo_prompt);
+                // Download and re-upload to R2 for permanent storage
+                const videoRes = await fetch(falVideoUrl);
+                if (!videoRes.ok) throw new Error(`Failed to fetch Hailuo video: ${videoRes.status}`);
+                const videoBuf = Buffer.from(await videoRes.arrayBuffer());
+                const key = buildUserKey(userId, "videos", "mp4", `broll-beat-${beat.index}`);
+                clipUrl = await uploadToR2(videoBuf, key, "video/mp4");
+                console.log(`[VeoLongAd] Hailuo B-roll beat ${beat.index} uploaded: ${clipUrl}`);
+              } catch (brollErr) {
+                console.error(`[VeoLongAd] Hailuo failed for beat ${beat.index}, falling back to static image:`, brollErr.message);
+                clipUrl = imgUrl; // fallback: static image → client Ken Burns
+              }
+            } else {
+              // Avatar beat — black screen placeholder (Veo temporarily disabled for design phase)
+              try {
+                const blackBuf = await sharp({
+                  create: { width: 1080, height: 1920, channels: 3, background: { r: 0, g: 0, b: 0 } },
+                }).jpeg({ quality: 85 }).toBuffer();
+                const key = buildUserKey(userId, "images", "jpg", `black-beat-${beat.index}`);
+                clipUrl = await uploadToR2(blackBuf, key, "image/jpeg");
               } catch (beatErr) {
-                console.error(`[VeoLongAd] Beat ${beat.index} (${beat.type}) failed:`, beatErr.message);
-                send({
-                  type: "beat_generating",
-                  beatIndex: beat.index,
-                  beatType: beat.type,
-                  visualType: beat.visual_type,
-                  totalBeats,
-                  message: `⚠️ Beat ${beat.index + 1} failed: ${beatErr.message}`,
-                });
+                console.error(`[VeoLongAd] Black screen gen failed for beat ${beat.index}:`, beatErr.message);
               }
             }
 
@@ -433,12 +406,7 @@ export async function POST(request) {
           await Promise.allSettled(beatPromises);
 
           // ── Stage 4: Collect, save, emit ─────────────────────────────────
-          // Build parallel arrays so audioUrls[i] always matches clipUrls[i]
-          const validPairs = clipResults
-            .map((clipUrl, i) => clipUrl ? { clipUrl, audioUrl: beatAudioUrls[i] || null } : null)
-            .filter(Boolean);
-          const clipUrls = validPairs.map((p) => p.clipUrl);
-          const audioUrls = validPairs.map((p) => p.audioUrl);
+          const clipUrls = clipResults.filter(Boolean);
           const totalDuration = workBeats.reduce((s, b) => s + (b.duration_seconds || 4), 0);
 
           send({ type: "uploading", message: "Saving to your Asset Library…" });
@@ -453,11 +421,11 @@ export async function POST(request) {
               metadata: {
                 source: "veo-long-ad-hybrid",
                 clipUrls,
-                audioUrls,
+                fullAudioUrl,
                 beats: workBeats,
                 totalBeats,
                 totalDuration,
-                ttsProvider: ttsEnabled ? "sarvam" : null,
+                ttsProvider: ttsEnabled ? "elevenlabs" : null,
                 language,
               },
             });
@@ -468,7 +436,8 @@ export async function POST(request) {
           send({
             type: "video_ready",
             clipUrls,
-            audioUrls,
+            fullAudioUrl,
+            audioUrls: null,
             videoUrl: clipUrls[0] || null,
             totalDuration,
             totalBeats,
@@ -531,201 +500,27 @@ export async function POST(request) {
   }
 }
 
-// ── Sarvam TTS ──────────────────────────────────────────────────────────────
-
-async function generateSarvamTTS(text, languageCode, speaker) {
-  const apiKey = process.env.SARVAM_API_KEY;
-  if (!apiKey) throw new Error("SARVAM_API_KEY not configured");
-
-  const response = await fetch("https://api.sarvam.ai/text-to-speech", {
-    method: "POST",
-    headers: {
-      "API-Subscription-Key": apiKey,
-      "Content-Type": "application/json",
+// ── ElevenLabs TTS via fal (multilingual-v2) ─────────────────────────────────
+// Model: fal-ai/elevenlabs/tts/multilingual-v2
+// Input: flat fields — voice, stability, similarity_boost, style, speed
+// Output: result.data.audio.url (MP3)
+async function generateElevenLabsTTS(text, voiceId) {
+  const result = await fal.subscribe("fal-ai/elevenlabs/tts/multilingual-v2", {
+    input: {
+      text,
+      voice: voiceId,
+      stability:        ELEVENLABS_VOICE_SETTINGS.stability,
+      similarity_boost: ELEVENLABS_VOICE_SETTINGS.similarity_boost,
+      style:            ELEVENLABS_VOICE_SETTINGS.style,
+      speed:            ELEVENLABS_VOICE_SETTINGS.speed,
     },
-    body: JSON.stringify({
-      inputs: [text],
-      target_language_code: languageCode,
-      speaker: speaker || "kavitha",
-      pace: 1.0,
-      speech_sample_rate: 22050,
-      enable_preprocessing: true,
-      model: "bulbul:v3",
-    }),
+    logs: false,
   });
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => "");
-    throw new Error(`Sarvam TTS error ${response.status}: ${errBody}`);
-  }
+  const audioUrl = result?.data?.audio?.url;
+  if (!audioUrl) throw new Error(`fal ElevenLabs returned no audio URL. keys: ${Object.keys(result?.data || {}).join(", ")}`);
 
-  const data = await response.json();
-  const base64Audio = data?.audios?.[0];
-  if (!base64Audio) throw new Error("Sarvam returned empty audio");
-
-  return Buffer.from(base64Audio, "base64");
-}
-
-// ── Veo generateVideos ──────────────────────────────────────────────────────
-
-async function generateVeoClip({ ai, apiKey, prompt, referenceImages, aspectRatio, userId, beatIndex, send }) {
-  const initialOp = await ai.models.generateVideos({
-    model: "veo-3.1-generate-preview",
-    prompt,
-    config: {
-      aspectRatio: aspectRatio || "9:16",
-      numberOfVideos: 1,
-      personGeneration: "allow_adult",
-      ...(referenceImages.length > 0 ? { referenceImages } : {}),
-    },
-  });
-
-  let currentOp = initialOp;
-  const deadline = Date.now() + VEO_TIMEOUT_MS;
-
-  while (currentOp && !currentOp.done) {
-    if (Date.now() > deadline) throw new Error(`Veo timed out for beat ${beatIndex}`);
-    await sleep(VEO_POLL_INTERVAL_MS);
-    send({ type: "ping" });
-
-    const nextOp = await ai.operations.getVideosOperation({ operation: currentOp });
-    if (nextOp) currentOp = nextOp;
-  }
-
-  if (!currentOp) throw new Error(`Veo operation lost for beat ${beatIndex}`);
-  if (currentOp.error) throw new Error(currentOp.error.message || `Veo failed for beat ${beatIndex}`);
-
-  const resp = currentOp.response ?? currentOp;
-  const videoObj = extractGeneratedVideo(resp);
-  const uri = extractVideoUri(videoObj);
-  if (!uri) throw new Error(`No video URI from Veo for beat ${beatIndex}`);
-
-  const fileId = extractFileId(uri);
-  if (!fileId) throw new Error(`Cannot extract fileId from Veo URI for beat ${beatIndex}`);
-
-  const downloadUrl = `https://generativelanguage.googleapis.com/v1beta/files/${fileId}:download?key=${apiKey}&alt=media`;
-  const videoRes = await fetch(downloadUrl);
-  if (!videoRes.ok) throw new Error(`Veo download failed for beat ${beatIndex}: ${videoRes.status}`);
-
-  const videoBuf = Buffer.from(await videoRes.arrayBuffer());
-  const key = buildUserKey(userId, "videos", "mp4", `property-beat-${beatIndex}`);
-  return uploadToR2(videoBuf, key, "video/mp4");
-}
-
-// ── Prompt builders ─────────────────────────────────────────────────────────
-
-function buildPropertyVeoPrompt(beat) {
-  const base = beat.veo_prompt || "Luxury property interior, slow cinematic push-in, warm ambient light. 9:16 vertical. No people.";
-  return `${base}
-
-RULES: 9:16 vertical portrait. No text or watermarks. No presenter — property visuals only. Match architectural style from reference image exactly. One room, one camera movement, one mood. No background music. No songs. Silent ambient sounds only.`;
-}
-
-function buildPresenterVeoPrompt(beat) {
-  const scene = beat.veo_prompt || presenterSceneByType(beat.type);
-  const narration = beat.narration || "";
-
-  return `Ultra-realistic real estate UGC video, 9:16 portrait for Instagram Reels.
-
-SUBJECT: Reconstruct the presenter exactly from the reference image — face, hair, outfit, skin tone, body type. The presenter must be MOVING and WALKING throughout the shot.
-
-SCENE: ${scene}
-
-${narration ? `DIALOGUE: "${narration.slice(0, 100)}${narration.length > 100 ? "…" : ""}" — mouth movement must match the words.` : ""}
-
-EXPRESSION: ${beat.lipsync_expression === "professional" ? "Confident professional smile, direct eye contact — like a seasoned real estate creator." : "Warm, natural, genuine smile — authentic UGC creator energy, not staged or stiff."}
-
-RULES: No text overlays. No watermarks. Ultra-realistic skin and lighting. No background music. No songs. Ambient sound only. The presenter must feel like a real Instagram real estate content creator, not a corporate spokesperson.`;
-}
-
-function presenterSceneByType(type) {
-  const map = {
-    HOOK: "Presenter already stepping out of a white luxury SUV, car door held open behind them, walks confidently toward camera with a natural warm smile, briefly glances up at the building facade. Smooth cinematic push-in following the walk. Golden hour warm light.",
-    AVATAR_SEGMENT: "Presenter walks through the most visually impressive area of the property, turns naturally to face camera mid-step, speaks with genuine enthusiasm and expressive hand gestures pointing at the space around them. Medium close-up tracking shot, luxury interior or exterior visible and moving behind.",
-    CTA: "Presenter finishes walking, stops and turns directly to camera with a warm authentic smile, extends one open hand toward viewer in a confident welcoming gesture. Close-up, elegant property softly blurred behind.",
-  };
-  return map[type] || "Presenter walks through the property, turns naturally to camera, speaks directly with energy and natural hand gestures. Medium close-up tracking shot.";
-}
-
-// ── Extraction helpers ───────────────────────────────────────────────────────
-
-function extractGeneratedVideo(result) {
-  if (!result) return null;
-  return (
-    result?.generatedVideos?.[0]?.video ||
-    result?.generatedVideos?.[0]?.videoResponse ||
-    result?.response?.generatedVideos?.[0]?.video ||
-    result?.response?.generatedVideos?.[0]?.videoResponse ||
-    result?.generateVideoResponse?.generatedSamples?.[0]?.video ||
-    result?.response?.generateVideoResponse?.generatedSamples?.[0]?.video ||
-    result?.videos?.[0] ||
-    result?.candidates?.[0]?.content?.parts?.find((p) => p?.fileData?.fileUri)?.fileData ||
-    null
-  );
-}
-
-function extractVideoUri(videoObj) {
-  if (!videoObj) return null;
-  return videoObj.uri || videoObj.fileUri || videoObj.videoUri || videoObj.url || null;
-}
-
-function extractFileId(uri) {
-  if (!uri) return null;
-  const match = uri.match(/files\/([^/:?]+)/);
-  return match?.[1] || null;
-}
-
-// ── Utilities ───────────────────────────────────────────────────────────────
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function createSemaphore(maxConcurrent) {
-  let running = 0;
-  const queue = [];
-  return {
-    async acquire() {
-      if (running < maxConcurrent) { running++; return; }
-      return new Promise((resolve) => queue.push(resolve));
-    },
-    release() {
-      running--;
-      if (queue.length > 0) { running++; queue.shift()(); }
-    },
-  };
-}
-
-async function stitchImagesHorizontal(buffers) {
-  if (!buffers || buffers.length === 0) return null;
-  if (buffers.length === 1) {
-    return sharp(buffers[0]).jpeg({ quality: 88 }).toBuffer();
-  }
-
-  const CELL_HEIGHT = 512;
-  const cells = await Promise.all(
-    buffers.map(async (buf) => {
-      const resized = await sharp(buf)
-        .resize({ height: CELL_HEIGHT, withoutEnlargement: false })
-        .jpeg({ quality: 88 })
-        .toBuffer();
-      const meta = await sharp(resized).metadata();
-      return { buffer: resized, width: meta.width };
-    })
-  );
-
-  const totalWidth = cells.reduce((sum, c) => sum + c.width, 0);
-  let offsetX = 0;
-  const composites = cells.map((c) => {
-    const entry = { input: c.buffer, left: offsetX, top: 0 };
-    offsetX += c.width;
-    return entry;
-  });
-
-  return sharp({
-    create: { width: totalWidth, height: CELL_HEIGHT, channels: 3, background: { r: 20, g: 20, b: 20 } },
-  })
-    .composite(composites)
-    .jpeg({ quality: 88 })
-    .toBuffer();
+  const res = await fetch(audioUrl);
+  if (!res.ok) throw new Error(`Failed to download TTS audio: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }

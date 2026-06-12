@@ -16,6 +16,8 @@ import {
   Globe2,
   Video,
   User,
+  Mic,
+  Play,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,19 @@ import { compressImage } from "@/utils/compress-image";
 
 const MIN_SCRIPT_WORDS = 20;
 const MAX_SCRIPT_WORDS = 500;
+
+// ElevenLabs voices — swap any id for a voice from your ElevenLabs account
+// stability / similarity / style are tuned in the API route (ELEVENLABS_VOICE_SETTINGS)
+const ELEVENLABS_VOICES = [
+  { id: "dVTC43Yewy5fAIcmsISI", label: "Anvi (Female)"    },
+  { id: "K2Byg54sHB1oHegvENtI", label: "Kanika (Female)"     },
+  { id: "XB0fDUnXU5powFXDhCwa", label: "Charlotte (Female)" },
+  { id: "pMsXgVXv3BLzUgSXRplE", label: "Serena (Female)"    },
+  { id: "DdD5pVl1QDeeI6MMtYbk", label: "Abhay (Male)"        },
+  { id: "JBFqnCBsd6RMkjVDRZzb", label: "George (Male)"      },
+  { id: "onwK4e9ZLuTAKqWW03F9", label: "Daniel (Male)"      },
+  { id: "TX3LPaxmHKxFdv7VOQHJ", label: "Liam (Male)"        },
+];
 
 /**
  * StepScript — Step 2 for the Long-Form Veo Ad pipeline.
@@ -43,6 +58,9 @@ export function StepScript({
   const [mode, setMode] = useState("manual"); // "manual" | "ai"
   const [language, setLanguage] = useState("english");
   const [tone, setTone] = useState("luxury");
+  const [elevenLabsVoice, setElevenLabsVoice] = useState("21m00Tcm4TlvDq8ikWAM");
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const previewAudioRef = useRef(null);
 
   // ── Manual mode state ────────────────────────────────────────────────────
   const [manualScript, setManualScript] = useState("");
@@ -76,6 +94,34 @@ export function StepScript({
   const words = activeScript.trim().split(/\s+/).filter(Boolean);
   const wordCount = words.length;
   const isScriptReady = wordCount >= MIN_SCRIPT_WORDS;
+
+  const handlePreviewVoice = async () => {
+    if (previewingVoice) return;
+    setPreviewingVoice(true);
+    try {
+      const voice = ELEVENLABS_VOICES.find((v) => v.id === elevenLabsVoice);
+      const res = await fetch("/api/veo-long-ad/preview-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceId: elevenLabsVoice, voiceLabel: voice?.label?.split(" (")[0], language }),
+      });
+      if (!res.ok) throw new Error("Preview failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        URL.revokeObjectURL(previewAudioRef.current.src);
+      }
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+      audio.onended = () => setPreviewingVoice(false);
+      audio.onerror = () => setPreviewingVoice(false);
+      await audio.play();
+    } catch (err) {
+      toast.error("Could not preview voice", { description: err.message });
+      setPreviewingVoice(false);
+    }
+  };
 
   const handleQaChange = (key, value) => {
     setQaAnswers((prev) => ({ ...prev, [key]: value }));
@@ -182,7 +228,7 @@ export function StepScript({
     if (chunks.length === 0) {
       return toast.error("Please plan the beats first.");
     }
-    onGenerate({ beats, chunks, masterVoicePrompt, voiceProfile: masterVoicePrompt, presenterDescription, language });
+    onGenerate({ beats, chunks, masterVoicePrompt, voiceProfile: masterVoicePrompt, presenterDescription, language, elevenLabsVoice });
   };
 
   return (
@@ -198,8 +244,8 @@ export function StepScript({
       </div>
 
       <div className="flex items-center justify-between">
-        {/* Language & Tone row */}
-        <div className="grid grid-cols-2 w-sm gap-3">
+        {/* Language, Voice & Tone row */}
+        <div className="grid grid-cols-3 w-2xl gap-3">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
               <Globe2 className="w-3.5 h-3.5" />
@@ -218,21 +264,51 @@ export function StepScript({
                   </option>
                 ))}
               </select>
-
-              {/* Custom arrow */}
               <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M6 8l4 4 4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </div>
             </div>
           </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
+              <Mic className="w-3.5 h-3.5" />
+              Voice
+            </label>
+            <div className="flex gap-1.5">
+              <div className="relative flex-1">
+                <select
+                  value={elevenLabsVoice}
+                  onChange={(e) => { setElevenLabsVoice(e.target.value); setPreviewingVoice(false); }}
+                  className="w-full appearance-none text-sm rounded-xl border border-neutral-200 bg-white px-3 py-2 pr-10 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#c7f038]/40 focus:border-[#c7f038]"
+                >
+                  {ELEVENLABS_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400">
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                    <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handlePreviewVoice}
+                disabled={previewingVoice}
+                title="Preview this voice"
+                className="shrink-0 flex items-center justify-center w-9 h-9 rounded-xl border border-neutral-200 bg-white shadow-sm text-neutral-500 hover:text-[#c7f038] hover:border-[#c7f038] disabled:opacity-50 transition-colors"
+              >
+                {previewingVoice
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Play className="w-3.5 h-3.5 ml-0.5" />
+                }
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-neutral-500 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
@@ -572,7 +648,7 @@ export function StepScript({
                       {chunk.narration && (
                         <div className="rounded-lg bg-blue-50/50 dark:bg-blue-900/10 border border-blue-200/40 p-2.5">
                           <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wide mb-1">
-                            Voiceover (Sarvam TTS)
+                            Voiceover (ElevenLabs)
                           </p>
                           <p className="text-xs text-foreground leading-relaxed">"{chunk.narration}"</p>
                         </div>

@@ -61,6 +61,7 @@ export function GenerationProgress({ generationParams, onReset }) {
     voiceProfile = "",
     presenterDescription = "",
     language = "english",
+    elevenLabsVoice = "21m00Tcm4TlvDq8ikWAM",
     locationImages = [],
     avatarImages = [],
   } = generationParams || {};
@@ -107,16 +108,26 @@ export function GenerationProgress({ generationParams, onReset }) {
     };
   }, []);
 
-  const triggerCombine = async (clipUrls, audioUrls) => {
+  const triggerCombine = async (clipUrls, audioUrls, fullAudioUrl) => {
     if (!clipUrls || clipUrls.length === 0) return;
     setStatus(STATUS.COMBINING);
     setCombineProgress("Loading FFmpeg…");
+
+    const hasAudio = !!(fullAudioUrl || audioUrls?.some(Boolean));
+    if (!hasAudio) {
+      console.warn("[GenerationProgress] No audio URL received — video will be silent.");
+      toast.warning("No audio generated — video will be silent. Check server logs for TTS errors.", { duration: 8000 });
+    } else {
+      console.log("[GenerationProgress] fullAudioUrl:", fullAudioUrl);
+    }
+
     try {
       const durations = beatPlan.map((b) => b.duration_seconds || b.estimatedSeconds || null);
       const { blobUrl, blob } = await combineVideos(clipUrls, {
         onProgress: (msg) => setCombineProgress(msg),
         durations,
-        audioUrls: audioUrls || null,
+        audioUrls: fullAudioUrl ? null : (audioUrls || null),
+        fullAudioUrl: fullAudioUrl || null,
       });
 
       // Upload to R2 so the URL is permanent and shareable on any platform
@@ -156,6 +167,7 @@ export function GenerationProgress({ generationParams, onReset }) {
       formData.append("masterVoicePrompt", voiceProfile || masterVoicePrompt);
       formData.append("presenterDescription", presenterDescription);
       formData.append("language", language);
+      formData.append("elevenLabsVoice", elevenLabsVoice);
       formData.append("aspectRatio", "9:16");
 
       await Promise.all(
@@ -271,6 +283,11 @@ export function GenerationProgress({ generationParams, onReset }) {
         setMessage(event.message || "Voice ready. Starting video generation…");
         break;
 
+      case "voice_warning":
+        toast.warning(event.message || "Voice generation issue", { duration: 8000 });
+        setMessage(event.message || "");
+        break;
+
       case "beat_generating":
         setCurrentChunkIdx(event.beatIndex ?? event.chunkIndex ?? 0);
         setMessage(event.message || "");
@@ -321,7 +338,7 @@ export function GenerationProgress({ generationParams, onReset }) {
           toast.error("Generation failed — no clips produced. Check the server console.");
         } else {
           toast.success(`${event.clipUrls.length} clips ready — combining with voiceover…`);
-          triggerCombine(event.clipUrls, event.audioUrls || null);
+          triggerCombine(event.clipUrls, event.audioUrls || null, event.fullAudioUrl || null);
         }
         break;
 
@@ -433,7 +450,7 @@ export function GenerationProgress({ generationParams, onReset }) {
             ? "Edit narration or Veo prompts below. Auto-approves in a few seconds."
             : status === STATUS.COMBINING
             ? combineProgress || "Combining clips with FFmpeg…"
-            : `${totalChunks} beats · Veo 3.1 + Sarvam TTS · parallel generation`}
+            : `${totalChunks} beats · Ken Burns + Sarvam TTS · avatar acts = black screen`}
         </p>
       </div>
 
@@ -711,7 +728,7 @@ export function GenerationProgress({ generationParams, onReset }) {
             </div>
             <div>
               <p className="text-[10px] text-muted-foreground">Model</p>
-              <p className="text-sm font-bold text-primary">Veo 3.1</p>
+              <p className="text-sm font-bold text-primary">Ken Burns</p>
             </div>
           </div>
 
