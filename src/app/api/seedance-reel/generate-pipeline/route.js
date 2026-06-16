@@ -19,17 +19,14 @@ if (process.env.FAL_KEY) {
 /**
  * POST /api/seedance-reel/generate-pipeline
  *
- * Simplified 2-part real estate reel pipeline:
- *   Part 1 (~15s): Avatar presenter talking — Seedance 2.0 reference-to-video
- *                  with identity images + TTS audio as references.
- *   Part 2 (~30-40s): Property B-roll clips (half Hailuo animated, half static)
- *                     with ElevenLabs voiceover overlay.
+ * 3-part real estate reel pipeline:
+ *   Part 1 (~15s): Avatar presenter — Seedance intro (generate_audio: true)
+ *   Part 2 (~12s): Architectural walkthrough — Seedance walkthrough (generate_audio: false)
+ *                  with ElevenLabs Part 2 voiceover overlaid by client
+ *   Part 3 (~10s): Avatar CTA — Seedance CTA (generate_audio: true)
  *
- * Client assembles final reel with FFmpeg WASM.
- *
- * SSE events: script_split → voice_part1_ready → seedance_prompt_ready →
- *             seedance_generating → seedance_done → voice_part2_ready →
- *             broll_generating → broll_done → uploading → video_ready → done
+ * TTS for all 3 parts generated in parallel, then all 3 Seedance calls run in parallel.
+ * Client assembles: combineVideos([walkthrough], {fullAudioUrl: part2}) → concatWithAudio([intro, wt, cta])
  */
 
 async function callLLM(prompt) {
@@ -59,17 +56,24 @@ async function generateElevenLabsTTS(text, voiceId) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function generateHailuoBroll(imageUrl, prompt) {
-  const result = await fal.subscribe("fal-ai/minimax/hailuo-02/standard/image-to-video", {
-    input: {
-      image_url: imageUrl,
-      prompt: prompt || "Slow cinematic pan across this luxury real estate property. Natural lighting, no people. 9:16 vertical.",
-    },
+async function generateAndUploadTTS(text, voiceId, userId, keyPrefix) {
+  const buf = await generateElevenLabsTTS(text, voiceId);
+  const key = buildUserKey(userId, "audio", "mp3", keyPrefix);
+  return uploadToR2(buf, key, "audio/mpeg");
+}
+
+async function callSeedanceAndUpload(seedanceInput, userId, keyName) {
+  const result = await fal.subscribe("bytedance/seedance-2.0/fast/reference-to-video", {
+    input: seedanceInput,
     logs: false,
   });
-  const videoUrl = result?.data?.video?.url;
-  if (!videoUrl) throw new Error("Hailuo returned no video URL");
-  return videoUrl;
+  const falVideoUrl = result?.data?.video?.url;
+  if (!falVideoUrl) throw new Error("Seedance returned no video URL");
+  const videoRes = await fetch(falVideoUrl);
+  if (!videoRes.ok) throw new Error(`Failed to fetch Seedance video: ${videoRes.status}`);
+  const videoBuf = Buffer.from(await videoRes.arrayBuffer());
+  const key = buildUserKey(userId, "videos", "mp4", keyName);
+  return uploadToR2(videoBuf, key, "video/mp4");
 }
 
 export async function POST(request) {
@@ -98,8 +102,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "script is required (min 30 chars)" }, { status: 400 });
     }
 
-    // Collect avatar URLs — handle both full https:// URLs (library/uploaded avatars)
-    // and relative /api/r2?key=... proxy URLs (prebuilt RE avatars served via the proxy endpoint)
+    // Collect avatar URLs — handle full https:// and relative /api/r2?key= proxy URLs
     const avatarUrls = [];
     for (let i = 0; i < 3; i++) {
       const v = formData.get(`avatarUrl_${i}`);
@@ -107,7 +110,6 @@ export async function POST(request) {
       if (v.startsWith("http")) {
         avatarUrls.push(v);
       } else if (v.includes("/api/r2?key=") && R2_PUBLIC_URL) {
-        // Prebuilt avatar: proxy URL → direct R2 public URL so Seedance can fetch it
         const key = decodeURIComponent(v.split("?key=")[1] || "");
         if (key) avatarUrls.push(`${R2_PUBLIC_URL}/${key}`);
       }
@@ -138,7 +140,7 @@ export async function POST(request) {
     }
     debit = creditResult.debit;
 
-    // Upload location images to R2 (cropped 9:16 for Hailuo + Seedance)
+    // Upload location images to R2 (9:16 crop for Seedance)
     const locationR2Urls = [];
     await Promise.all(
       locationBufs.map(async (buf, i) => {
@@ -166,61 +168,64 @@ export async function POST(request) {
         const pingInterval = setInterval(() => send({ type: "ping" }), 3000);
 
         try {
-          // ── Stage 1: Script Split via LLM ─────────────────────────────────
-          send({ type: "script_splitting", message: "Splitting script into avatar + B-roll parts…" });
+          // ── Stage 1: 3-Part Script Split via LLM ──────────────────────────
+          send({ type: "script_splitting", message: "Splitting script into 3 parts…" });
 
-          const splitPrompt = `You are a video script editor. Split the following real estate ad script into exactly TWO parts for a vertical reel video format.
+          const splitPrompt = `You are a video script editor. Split this real estate ad script into exactly THREE parts for a vertical reel video.
 
 RULES:
-- Part 1 (AVATAR TALKING): Must be ≤40 words (~15 seconds at 2.5 words/sec). Must end at a natural sentence boundary. This is what the presenter will speak directly to camera. Choose a hook/intro portion that grabs attention.
-- Part 2 (VOICEOVER): Everything remaining from the script. This will play as voiceover behind B-roll property footage.
-- Do NOT change any words — only split at a sentence boundary.
-- Return ONLY valid JSON, no markdown:
-
-{"part1": "...", "part2": "..."}
+- Part 1 (AVATAR INTRO ≤35 words): Opening hook. The presenter speaks directly to camera with energy and personality. Must end at a natural sentence boundary.
+- Part 2 (WALKTHROUGH NARRATION ≤80 words): Property highlights. This plays as voiceover behind a smooth architectural walkthrough. Describes rooms, features, lifestyle.
+- Part 3 CTA (≤20 words): Punchy, humorous, memorable call-to-action delivered directly to camera. Make it witty and irresistible.
+- Do NOT change any words — split at natural sentence boundaries only.
+- Return ONLY valid JSON, no markdown: {"part1": "...", "part2": "...", "part3_cta": "..."}
 
 SCRIPT:
 ${script}`;
 
           let part1 = "";
           let part2 = "";
+          let part3_cta = "";
 
           try {
             const splitRaw = await callLLM(splitPrompt);
             const jsonMatch = splitRaw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim().match(/\{[\s\S]*\}/);
             if (jsonMatch) {
               const parsed = JSON.parse(jsonMatch[0]);
-              if (parsed.part1 && parsed.part2) {
-                part1 = parsed.part1.trim();
-                part2 = parsed.part2.trim();
+              if (parsed.part1 && parsed.part2 && parsed.part3_cta) {
+                part1     = parsed.part1.trim();
+                part2     = parsed.part2.trim();
+                part3_cta = parsed.part3_cta.trim();
               }
             }
           } catch (splitErr) {
             console.warn("[SeedanceReel] LLM split failed, using word-count split:", splitErr.message);
           }
 
-          // Fallback: split by word count if LLM failed
-          if (!part1 || !part2) {
+          // Fallback: word-count split
+          if (!part1 || !part2 || !part3_cta) {
             const words = script.split(/\s+/);
-            const splitIdx = Math.min(40, Math.floor(words.length * 0.35));
-            part1 = words.slice(0, splitIdx).join(" ");
-            part2 = words.slice(splitIdx).join(" ");
+            const total = words.length;
+            const p1End    = Math.min(35, Math.floor(total * 0.30));
+            const p3Start  = Math.max(p1End + 1, total - Math.min(20, Math.floor(total * 0.20)));
+            part1     = words.slice(0, p1End).join(" ");
+            part2     = words.slice(p1End, p3Start).join(" ");
+            part3_cta = words.slice(p3Start).join(" ");
           }
 
           const part1Words = part1.split(/\s+/).filter(Boolean).length;
           const part2Words = part2.split(/\s+/).filter(Boolean).length;
+          const part3Words = part3_cta.split(/\s+/).filter(Boolean).length;
 
-          // Dynamic Seedance duration: word count → speech duration + 3s buffer, clamped 10–20s
-          const seedanceDuration = String(Math.min(20, Math.max(10, Math.ceil(part1Words / 2.5) + 3)));
-          console.log(`[SeedanceReel] Part 1: ${part1Words} words → Seedance duration: ${seedanceDuration}s`);
+          // Dynamic durations
+          const seedanceDuration    = String(Math.min(20, Math.max(10, Math.ceil(part1Words / 2.5) + 3)));
+          const walkthroughDuration = "12";
+          const ctaDuration         = "10";
+          console.log(`[SeedanceReel] Durations — intro:${seedanceDuration}s wt:${walkthroughDuration}s cta:${ctaDuration}s`);
 
           // ── Language adaptation: bidirectional script conversion ───────────
-          // part1_tts   → Devanagari/native script  → ElevenLabs TTS Part 1
-          // part2_tts   → Devanagari/native script  → ElevenLabs TTS Part 2
-          // part1_roman → Roman transliteration     → Seedance fixed prompt template
-          let part1_tts = part1;    // default: use as-is
-          let part2_tts = part2;    // default: use as-is
-          let part1_roman = part1;  // default: already Roman
+          let part1_tts = part1, part2_tts = part2, part3_tts = part3_cta;
+          let part1_roman = part1, part3_roman = part3_cta;
 
           const langNameMap = {
             english: "English", hindi: "Hindi", hinglish: "Hinglish", marathi: "Marathi",
@@ -229,7 +234,6 @@ ${script}`;
           };
           const langName = langNameMap[language] || "English";
 
-          // Detect whether part1 already contains native/non-Roman Unicode script chars
           const NATIVE_SCRIPT_RE = /[ऀ-ൿ؀-ۿ]/;
           const part1HasNativeScript = NATIVE_SCRIPT_RE.test(part1);
 
@@ -250,46 +254,55 @@ ${script}`;
 
           if (language !== "english") {
             if (!part1HasNativeScript && nativeScriptRule[language]) {
-              // Input is Roman → convert BOTH parts to native script in one LLM call
-              send({ type: "script_adapting", message: `Converting scripts to ${langName} for TTS…` });
+              // Roman → native script: convert all 3 parts in one LLM call
+              send({ type: "script_adapting", message: `Converting all parts to ${langName} for TTS…` });
               try {
-                const adaptPrompt = `You are a script localisation tool. The following ${langName} text is written in Roman transliteration.
+                const adaptPrompt = `You are a script localisation tool. The following ${langName} text is in Roman transliteration.
 
-TASK: Convert BOTH parts to proper native script for text-to-speech.
+TASK: Convert ALL THREE parts to proper native script for text-to-speech.
 RULE: ${nativeScriptRule[language]}
 IMPORTANT: Do NOT translate. Do NOT change any words. Only change the writing system.
 Return ONLY valid JSON (no markdown):
-{"part1": "...", "part2": "..."}
+{"part1": "...", "part2": "...", "part3_cta": "..."}
 
 PART 1:
 ${part1}
 
 PART 2:
-${part2}`;
+${part2}
+
+PART 3 CTA:
+${part3_cta}`;
                 const adaptRaw = await callLLM(adaptPrompt);
                 const match = adaptRaw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim().match(/\{[\s\S]*\}/);
                 if (match) {
                   const parsed = JSON.parse(match[0]);
-                  if (parsed.part1?.trim().length > 5) part1_tts = parsed.part1.trim();
-                  if (parsed.part2?.trim().length > 5) part2_tts = parsed.part2.trim();
+                  if (parsed.part1?.trim().length > 5)     part1_tts = parsed.part1.trim();
+                  if (parsed.part2?.trim().length > 5)     part2_tts = parsed.part2.trim();
+                  if (parsed.part3_cta?.trim().length > 5) part3_tts = parsed.part3_cta.trim();
                 }
               } catch (adaptErr) {
                 console.warn("[SeedanceReel] Roman→native conversion failed:", adaptErr.message);
               }
             } else if (part1HasNativeScript) {
-              // Input is already native script → use as-is for TTS (both parts)
-              part1_tts = part1;
-              part2_tts = part2;
-              // Still need to transliterate part1 to Roman for Seedance prompt
-              send({ type: "script_adapting", message: `Transliterating Part 1 to Roman for Seedance prompt…` });
+              // Already native script → transliterate part1 + part3_cta to Roman for Seedance prompts
+              send({ type: "script_adapting", message: `Transliterating intro + CTA to Roman for Seedance prompts…` });
               try {
-                const romanizePrompt = `Transliterate the following ${langName} text from native script to Romanized Latin letters (e.g., Hindi "नमस्ते" → "Namaste", "luxury apartment" stays "luxury apartment"). Keep English brand names and numbers unchanged. Return ONLY the Romanized text.
+                const romanizePrompt = `Transliterate the following ${langName} texts from native script to Romanized Latin letters. Keep English brand names and numbers unchanged.
+Return ONLY valid JSON (no markdown):
+{"part1_roman": "...", "part3_roman": "..."}
 
-TEXT:
-${part1}`;
-                const romanized = await callLLM(romanizePrompt);
-                if (romanized && romanized.trim().length > 5) {
-                  part1_roman = romanized.trim();
+TEXT 1 (intro):
+${part1}
+
+TEXT 2 (CTA):
+${part3_cta}`;
+                const romanRaw = await callLLM(romanizePrompt);
+                const match = romanRaw.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim().match(/\{[\s\S]*\}/);
+                if (match) {
+                  const parsed = JSON.parse(match[0]);
+                  if (parsed.part1_roman?.trim().length > 5) part1_roman = parsed.part1_roman.trim();
+                  if (parsed.part3_roman?.trim().length > 5) part3_roman = parsed.part3_roman.trim();
                 }
               } catch (romanErr) {
                 console.warn("[SeedanceReel] Native→Roman transliteration failed:", romanErr.message);
@@ -297,51 +310,38 @@ ${part1}`;
             }
           }
 
-          send({ type: "script_split", part1, part2, part1Words, part2Words, part1_tts, part1_roman });
+          send({ type: "script_split", part1, part2, part3_cta, part1Words, part2Words, part3Words });
 
-          // ── Stage 2: Part 1 TTS (Devanagari/native script for natural pronunciation) ──
-          send({ type: "voice_generating", part: 1, message: `Generating Part 1 voice (${part1Words} words)…` });
+          // ── Stage 2: Generate all 3 TTS in parallel ───────────────────────
+          send({ type: "voice_generating", message: "Generating voiceovers for all 3 parts in parallel…" });
 
-          let part1AudioUrl = null;
-          try {
-            const audioBuf = await generateElevenLabsTTS(part1_tts, voiceId);
-            const key = buildUserKey(userId, "audio", "mp3", "sreel-part1-voice");
-            part1AudioUrl = await uploadToR2(audioBuf, key, "audio/mpeg");
-            send({ type: "voice_part1_ready", audioUrl: part1AudioUrl, message: "Part 1 voice ready." });
-          } catch (ttsErr) {
-            console.error("[SeedanceReel] Part 1 TTS failed:", ttsErr.message);
-            send({ type: "voice_warning", message: `Part 1 TTS failed: ${ttsErr.message}` });
-          }
+          const [p1TtsResult, p2TtsResult, p3TtsResult] = await Promise.allSettled([
+            generateAndUploadTTS(part1_tts,  voiceId, userId, "sreel-part1-voice"),
+            generateAndUploadTTS(part2_tts,  voiceId, userId, "sreel-part2-voice"),
+            generateAndUploadTTS(part3_tts,  voiceId, userId, "sreel-part3-voice"),
+          ]);
 
-          // ── Stage 3: Build Seedance Prompt from FIXED TEMPLATE ────────────
-          // The template is always the same car-exit → walk → dialogue → bystanders structure.
-          // Only the dialogue slot (part1_roman) and image indices change.
-          send({ type: "seedance_prompt_generating", message: "Building Seedance avatar video prompt…" });
+          let part1AudioUrl = null, part2AudioUrl = null, part3AudioUrl = null;
+          if (p1TtsResult.status === "fulfilled") { part1AudioUrl = p1TtsResult.value; }
+          else console.error("[SeedanceReel] Part 1 TTS failed:", p1TtsResult.reason?.message);
+          if (p2TtsResult.status === "fulfilled") { part2AudioUrl = p2TtsResult.value; }
+          else console.error("[SeedanceReel] Part 2 TTS failed:", p2TtsResult.reason?.message);
+          if (p3TtsResult.status === "fulfilled") { part3AudioUrl = p3TtsResult.value; }
+          else console.error("[SeedanceReel] Part 3 TTS failed:", p3TtsResult.reason?.message);
 
-          const numAvatarImages = avatarUrls.length;
+          send({ type: "voice_all_ready", part1AudioUrl, part2AudioUrl, part3AudioUrl });
+
+          // ── Stage 3: Build 3 Seedance prompts ─────────────────────────────
+          const numAvatarImages   = avatarUrls.length;
           const validLocationUrls = locationR2Urls.filter(Boolean);
-          const numLocationInSeedance = validLocationUrls.length; // all location images (no cap)
+          const numLocImgs        = validLocationUrls.length;
 
-          // Image index references — avatars first, then all location images
-          // @Image1..@ImageN  = avatar images
-          // @Image(N+1)..end  = location images
-          const locationImageRefs = validLocationUrls
-            .map((_, i) => `@Image${numAvatarImages + 1 + i}`)
-            .join(", ");
+          // ── Prompt A: Intro avatar (car → walk → dialogue, same proven template) ──
+          const faceIdentityRef   = numAvatarImages >= 3 ? `@Image2 and @Image3` : numAvatarImages >= 2 ? `@Image1 and @Image2` : `@Image1`;
+          const locationImageRefs = validLocationUrls.map((_, i) => `@Image${numAvatarImages + 1 + i}`).join(", ");
+          const locationPhrase    = locationImageRefs ? `into the outdoor entrance area shown in ${locationImageRefs}` : "toward the outdoor entrance";
 
-          const locationPhrase = locationImageRefs
-            ? `into the outdoor entrance area shown in ${locationImageRefs}`
-            : "toward the outdoor entrance";
-
-          // Face identity references — use Image1 for body exit pose, extra images for face match
-          const faceIdentityRef = numAvatarImages >= 3
-            ? `@Image2 and @Image3`
-            : numAvatarImages >= 2
-            ? `@Image1 and @Image2`
-            : `@Image1`;
-
-          // FIXED TEMPLATE — do not change structure; only dialogue and references are variable
-          const seedancePrompt =
+          const introPrompt =
             `Simple, sleek UGC smartphone vlog footage. The video begins as a luxury white car door opens. ` +
             `@Image1 steps out naturally and walks two steps forward ${locationPhrase}. ` +
             `Her face matches the exact identity, features, and smile of ${faceIdentityRef}. ` +
@@ -350,115 +350,119 @@ ${part1}`;
             `In the background, out-of-focus bystanders casually walk past the property entrance. ` +
             `Neutral daylight, realistic handheld camera stabilization, natural skin texture with visible pores, and clean, unedited raw video aesthetic.`;
 
-          send({ type: "seedance_prompt_ready", prompt: seedancePrompt, message: "Seedance prompt ready." });
+          // ── Prompt B: Architectural walkthrough (location images only, no avatar) ──
+          let walkthroughPrompt =
+            `A seamless, continuous 12-second architectural walkthrough video with zero hard cuts. `;
+          if (numLocImgs >= 1)
+            walkthroughPrompt += `The camera begins at the exterior facade and environment shown in @Image1, slowly pushing forward toward the main entrance. `;
+          if (numLocImgs >= 2)
+            walkthroughPrompt += `The camera fluidly morphs through the threshold to reveal the interior space depicted in @Image2, panning gently to highlight the ambient features and decor. `;
+          if (numLocImgs >= 3)
+            walkthroughPrompt += `Maintaining smooth stabilized handheld momentum, the camera pushes through an archway into the next adjoining space shown in @Image3, tracking smoothly across the room. `;
+          if (numLocImgs >= 4)
+            walkthroughPrompt += `The camera glides forward, transitioning effortlessly into the environment shown in @Image4, accentuating the unique spatial layout and design elements. `;
+          walkthroughPrompt +=
+            `The entire 12-second progression is one fluid, unbroken sequence — hyper-realistic textures, consistent interior lighting transitions, soft shadows, and clean 4K architectural rendering quality.`;
+          if (part2AudioUrl)
+            walkthroughPrompt += ` Camera pacing and transitions are dynamically synchronized with the rhythm of @Audio1.`;
 
-          // ── Stage 4: Call Seedance 2.0 ────────────────────────────────────
-          send({ type: "seedance_generating", message: "Generating avatar video via Seedance 2.0 (this takes ~2 minutes)…" });
+          // ── Prompt C: CTA avatar (confident, charming, hooky closing) ──────
+          const ctaBgRef    = numLocImgs > 0 ? ` against the stunning property backdrop in @Image${numAvatarImages + 1}` : "";
+          const ctaPrompt   =
+            `Sleek, punchy UGC smartphone vlog footage. @Image1 turns back toward the camera with a charismatic, wide grin${ctaBgRef}. ` +
+            `Her face matches the exact identity and confident energy of ${faceIdentityRef}. ` +
+            `She leans slightly toward the camera lens with sparkling eyes and delivers the closing line with irresistible charm: "${part3_roman}". ` +
+            `Her lip movements and natural expressions match perfectly to the syllables and cadence of @Audio1. ` +
+            `She finishes with a bright, unforgettable smile directly into the lens — leaving no doubt about what to do next. ` +
+            `Warm golden-hour glow, soft property bokeh background, handheld micro-movement, natural skin texture. Confident, witty, memorable.`;
 
-          let avatarVideoUrl = null;
-          try {
-            // Build image_urls: avatar images first (max 3), then all location images
-            // Seedance reference-to-video supports up to 9 images total (3 avatar + 4 location = 7, safe)
-            const seedanceImageUrls = [
-              ...avatarUrls.slice(0, 3),
-              ...locationR2Urls.filter(Boolean),
-            ];
-            console.log(`[SeedanceReel] Seedance image_urls (${seedanceImageUrls.length}):`, seedanceImageUrls);
+          send({ type: "seedance_prompt_ready", introPrompt, walkthroughPrompt, ctaPrompt, message: "All 3 Seedance prompts ready." });
 
-            const seedanceInput = {
-              prompt: seedancePrompt,
-              aspect_ratio: "9:16",
-              duration: seedanceDuration, // explicit seconds so Seedance doesn't cut short
-              resolution: "720p",
-              generate_audio: true, // Seedance generates its own voice — baked into the video
-            };
+          // ── Stage 4: All 3 Seedance calls in parallel ─────────────────────
+          send({ type: "seedance_generating", message: "Generating 3 videos in parallel via Seedance 2.0 (takes ~3–7 min)…" });
 
-            if (seedanceImageUrls.length > 0) {
-              seedanceInput.image_urls = seedanceImageUrls;
-            }
-            if (part1AudioUrl) {
-              seedanceInput.audio_urls = [part1AudioUrl];
-            }
+          // Intro: avatar images + all location images; 720p; baked audio
+          const introImageUrls = [...avatarUrls.slice(0, 3), ...validLocationUrls];
+          const introInput = {
+            prompt: introPrompt,
+            aspect_ratio: "9:16",
+            duration: seedanceDuration,
+            resolution: "720p",
+            generate_audio: true,
+            ...(introImageUrls.length > 0   && { image_urls: introImageUrls }),
+            ...(part1AudioUrl               && { audio_urls: [part1AudioUrl] }),
+          };
 
-            const seedanceResult = await fal.subscribe("bytedance/seedance-2.0/fast/reference-to-video", {
-              input: seedanceInput,
-              logs: false,
-            });
+          // Walkthrough: location images only; 480p; no baked audio (Part 2 TTS overlaid by client)
+          const walkthroughInput = {
+            prompt: walkthroughPrompt,
+            aspect_ratio: "9:16",
+            duration: walkthroughDuration,
+            resolution: "480p",
+            generate_audio: false,
+            ...(validLocationUrls.length > 0 && { image_urls: validLocationUrls }),
+            ...(part2AudioUrl                && { audio_urls: [part2AudioUrl] }), // pacing reference only
+          };
 
-            const falVideoUrl = seedanceResult?.data?.video?.url;
-            if (!falVideoUrl) throw new Error("Seedance returned no video URL");
+          // CTA: avatar images + up to 2 location images for backdrop context; 720p; baked audio
+          const ctaImageUrls = [...avatarUrls.slice(0, 3), ...validLocationUrls.slice(0, 2)];
+          const ctaInput = {
+            prompt: ctaPrompt,
+            aspect_ratio: "9:16",
+            duration: ctaDuration,
+            resolution: "720p",
+            generate_audio: true,
+            ...(ctaImageUrls.length > 0 && { image_urls: ctaImageUrls }),
+            ...(part3AudioUrl           && { audio_urls: [part3AudioUrl] }),
+          };
 
-            const videoRes = await fetch(falVideoUrl);
-            if (!videoRes.ok) throw new Error(`Failed to fetch Seedance video: ${videoRes.status}`);
-            const videoBuf = Buffer.from(await videoRes.arrayBuffer());
-            const key = buildUserKey(userId, "videos", "mp4", "sreel-avatar");
-            avatarVideoUrl = await uploadToR2(videoBuf, key, "video/mp4");
-            console.log(`[SeedanceReel] Avatar video uploaded: ${avatarVideoUrl}`);
-            send({ type: "seedance_done", avatarVideoUrl, message: "Avatar video ready!" });
-          } catch (seedanceErr) {
-            console.error("[SeedanceReel] Seedance failed:", seedanceErr.message);
-            send({ type: "seedance_error", message: `Seedance failed: ${seedanceErr.message}. Continuing with B-roll…` });
-          }
+          console.log(`[SeedanceReel] Intro image_urls (${introInput.image_urls?.length ?? 0}):`, introInput.image_urls);
+          console.log(`[SeedanceReel] Walkthrough image_urls (${walkthroughInput.image_urls?.length ?? 0}):`, walkthroughInput.image_urls);
 
-          // ── Stage 5: Part 2 TTS ────────────────────────────────────────────
-          send({ type: "voice_generating", part: 2, message: `Generating Part 2 voiceover (${part2Words} words)…` });
+          let avatarVideoUrl     = null;
+          let walkthroughVideoUrl = null;
+          let ctaVideoUrl        = null;
 
-          let part2AudioUrl = null;
-          try {
-            const audioBuf = await generateElevenLabsTTS(part2_tts, voiceId); // native script for natural pronunciation
-            const key = buildUserKey(userId, "audio", "mp3", "sreel-part2-voice");
-            part2AudioUrl = await uploadToR2(audioBuf, key, "audio/mpeg");
-            send({ type: "voice_part2_ready", audioUrl: part2AudioUrl, message: "Part 2 voiceover ready." });
-          } catch (ttsErr) {
-            console.error("[SeedanceReel] Part 2 TTS failed:", ttsErr.message);
-            send({ type: "voice_warning", message: `Part 2 TTS failed: ${ttsErr.message}` });
-          }
-
-          // ── Stage 6: B-roll Generation (parallel) ─────────────────────────
-          // validLocationUrls already declared in Stage 3 — reuse it here
-          const brollClips = new Array(validLocationUrls.length).fill(null);
-
-          if (validLocationUrls.length > 0) {
-            send({
-              type: "broll_generating",
-              totalBrolls: validLocationUrls.length,
-              message: `Generating ${validLocationUrls.length} B-roll clip(s)…`,
-            });
-
-            await Promise.allSettled(
-              validLocationUrls.map(async (imgUrl, i) => {
-                const isAnimated = i % 2 === 0; // even = Hailuo, odd = static
-
-                if (isAnimated) {
-                  try {
-                    const falVideoUrl = await generateHailuoBroll(imgUrl, null);
-                    const videoRes = await fetch(falVideoUrl);
-                    if (!videoRes.ok) throw new Error(`Fetch failed: ${videoRes.status}`);
-                    const videoBuf = Buffer.from(await videoRes.arrayBuffer());
-                    const key = buildUserKey(userId, "videos", "mp4", `sreel-broll-${i}`);
-                    const clipUrl = await uploadToR2(videoBuf, key, "video/mp4");
-                    brollClips[i] = { url: clipUrl, isAnimated: true };
-                    send({ type: "broll_done", index: i, clipUrl, isAnimated: true, message: `B-roll ${i + 1} done (animated).` });
-                  } catch (brollErr) {
-                    console.error(`[SeedanceReel] Hailuo failed for broll ${i}, using static:`, brollErr.message);
-                    brollClips[i] = { url: imgUrl, isAnimated: false };
-                    send({ type: "broll_done", index: i, clipUrl: imgUrl, isAnimated: false, message: `B-roll ${i + 1} done (static fallback).` });
-                  }
-                } else {
-                  // Static image — client does Ken Burns
-                  brollClips[i] = { url: imgUrl, isAnimated: false };
-                  send({ type: "broll_done", index: i, clipUrl: imgUrl, isAnimated: false, message: `B-roll ${i + 1} added (static).` });
-                }
+          // Fire all 3 simultaneously; send SSE events as each one resolves
+          await Promise.allSettled([
+            callSeedanceAndUpload(introInput, userId, "sreel-avatar")
+              .then(url => {
+                avatarVideoUrl = url;
+                console.log("[SeedanceReel] Intro avatar uploaded:", url);
+                send({ type: "seedance_done", avatarVideoUrl: url, message: "Intro avatar video ready!" });
               })
-            );
-          }
+              .catch(err => {
+                console.error("[SeedanceReel] Intro Seedance failed:", err.message);
+                send({ type: "seedance_error", message: `Intro video failed: ${err.message}` });
+              }),
 
-          const validBrolls = brollClips.filter(Boolean);
+            callSeedanceAndUpload(walkthroughInput, userId, "sreel-walkthrough")
+              .then(url => {
+                walkthroughVideoUrl = url;
+                console.log("[SeedanceReel] Walkthrough uploaded:", url);
+                send({ type: "walkthrough_done", walkthroughVideoUrl: url, message: "Architectural walkthrough ready!" });
+              })
+              .catch(err => {
+                console.error("[SeedanceReel] Walkthrough Seedance failed:", err.message);
+                send({ type: "seedance_error", message: `Walkthrough failed: ${err.message}` });
+              }),
 
-          // ── Stage 7: Save asset + finalize ────────────────────────────────
+            callSeedanceAndUpload(ctaInput, userId, "sreel-cta")
+              .then(url => {
+                ctaVideoUrl = url;
+                console.log("[SeedanceReel] CTA avatar uploaded:", url);
+                send({ type: "seedance_cta_done", ctaVideoUrl: url, message: "CTA avatar video ready!" });
+              })
+              .catch(err => {
+                console.error("[SeedanceReel] CTA Seedance failed:", err.message);
+                send({ type: "seedance_error", message: `CTA video failed: ${err.message}` });
+              }),
+          ]);
+
+          // ── Stage 5: Save asset + finalize ────────────────────────────────
           send({ type: "uploading", message: "Saving to your Asset Library…" });
 
-          const primaryUrl = avatarVideoUrl || validBrolls[0]?.url || null;
+          const primaryUrl = avatarVideoUrl || walkthroughVideoUrl || ctaVideoUrl;
           if (primaryUrl) {
             try {
               await dbConnect();
@@ -470,10 +474,11 @@ ${part1}`;
                 metadata: {
                   source: "seedance-reel",
                   avatarVideoUrl,
+                  walkthroughVideoUrl,
+                  ctaVideoUrl,
                   part1AudioUrl,
-                  brollClips: validBrolls,
                   part2AudioUrl,
-                  totalBrolls: validBrolls.length,
+                  part3AudioUrl,
                   language,
                 },
               });
@@ -482,13 +487,13 @@ ${part1}`;
             }
           }
 
-          const totalDuration = 60; // estimate; client will know real duration after assembly
+          const totalDuration = 37; // ~15 + 12 + 10; client knows real duration after assembly
 
           send({
             type: "video_ready",
             avatarVideoUrl,
-            part1AudioUrl,
-            brollClips: validBrolls,
+            walkthroughVideoUrl,
+            ctaVideoUrl,
             part2AudioUrl,
             totalDuration,
             message: "All assets ready! Assembling final reel…",

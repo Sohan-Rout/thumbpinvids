@@ -148,7 +148,10 @@ export async function combineVideos(videoUrls, options = {}) {
             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-profile:v", "baseline",
+            "-level", "3.1",
             "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             "-an",
             `input${i}.mp4`,
           ]);
@@ -168,7 +171,10 @@ export async function combineVideos(videoUrls, options = {}) {
               "-t", String(targetDur),
               "-c:v", "libx264",
               "-preset", "ultrafast",
+              "-profile:v", "baseline",
+              "-level", "3.1",
               "-pix_fmt", "yuv420p",
+              "-movflags", "+faststart",
               "-an",
               `input${i}.mp4`,
             ]);
@@ -291,6 +297,9 @@ export async function combineVideos(videoUrls, options = {}) {
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "23",
+        "-profile:v", "baseline",
+        "-level", "3.1",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",
@@ -385,25 +394,18 @@ export async function concatWithAudio(videoUrls, options = {}) {
     const concatList = videoUrls.map((_, i) => `file 'concat_in${i}.mp4'`).join("\n");
     await ffmpeg.writeFile("concat_audio.txt", new TextEncoder().encode(concatList));
 
-    onProgress?.("Concatenating with audio…");
-    try {
-      await ffmpeg.exec([
-        "-f", "concat", "-safe", "0", "-i", "concat_audio.txt",
-        "-c", "copy",
-        "-movflags", "+faststart",
-        "concat_out.mp4",
-      ]);
-    } catch {
-      // Re-encode fallback (handles mismatched codecs or SAR)
-      onProgress?.("Re-encoding for codec compatibility…");
-      await ffmpeg.exec([
-        "-f", "concat", "-safe", "0", "-i", "concat_audio.txt",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart",
-        "concat_out.mp4",
-      ]);
-    }
+    // Always re-encode to H.264 baseline for universal Apple/iPhone compatibility.
+    // Stream copy is skipped because Seedance outputs High profile which Safari/iOS can't decode.
+    onProgress?.("Encoding final reel (H.264 baseline)…");
+    await ffmpeg.exec([
+      "-f", "concat", "-safe", "0", "-i", "concat_audio.txt",
+      "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+      "-profile:v", "baseline", "-level", "3.1",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      "concat_out.mp4",
+    ]);
 
     const outputData = await ffmpeg.readFile("concat_out.mp4");
     const blob = new Blob([outputData.buffer], { type: "video/mp4" });
